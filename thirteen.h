@@ -12,14 +12,40 @@ It is inspired by the simplicity of the Mode 13h days where you initialized the 
 
 #define DX12VALIDATION() (_DEBUG && false)
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <d3d12.h>
-#include <dxgi1_6.h>
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+    #include <d3d12.h>
+    #include <dxgi1_6.h>
+#elif defined(__APPLE__)
+    #include <TargetConditionals.h>
+#endif
+
+#include <cstdlib>
+#include <cstring>
+#include <chrono>
+#include <cstdio>
 #include <string>
 
-#pragma comment(lib, "d3d12.lib")
-#pragma comment(lib, "dxgi.lib")
+#if defined(_WIN32)
+    #pragma comment(lib, "d3d12.lib")
+    #pragma comment(lib, "dxgi.lib")
+#endif
+
+#if !defined(_WIN32)
+    #ifndef VK_ESCAPE
+        #define VK_ESCAPE 0x1B
+    #endif
+    #ifndef VK_SPACE
+        #define VK_SPACE 0x20
+    #endif
+#endif
+
+#if defined(__APPLE__) && defined(TARGET_OS_OSX) && TARGET_OS_OSX
+    #define THIRTEEN_PLATFORM_MACOS 1
+#else
+    #define THIRTEEN_PLATFORM_MACOS 0
+#endif
 
 namespace Thirteen
 {
@@ -82,23 +108,37 @@ namespace Thirteen
     // Returns whether a keyboard key was pressed in the previous frame (use Windows virtual key codes).
     bool GetKeyLastFrame(int keyCode);
 
+    #if defined(_WIN32)
+    // Internal window procedure.
+    LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    #endif
+
+    #if defined(_WIN32)
+        using NativeWindowHandle = HWND;
+    #else
+        using NativeWindowHandle = void*;
+    #endif
+
     // ========================================
 
     // Internal state
     namespace Internal
     {
-        HWND hwnd = nullptr;
+        inline double NowSeconds()
+        {
+            using clock = std::chrono::steady_clock;
+            return std::chrono::duration<double>(clock::now().time_since_epoch()).count();
+        }
+
         uint32 width = 320;
         uint32 height = 200;
         bool shouldQuit = false;
         bool vsyncEnabled = true;
-        bool tearingSupported = false;
         bool isFullscreen = false;
         std::string appName = "ThirteenApp";
 
         // Frame timing
-        LARGE_INTEGER perfFrequency = {};
-        LARGE_INTEGER lastFrameTime = {};
+        double lastFrameTime = 0.0;
         double lastDeltaTime = 0.0;
         double frameTimeSum = 0.0;
         int frameCount = 0;
@@ -115,25 +155,520 @@ namespace Thirteen
         bool keys[256] = {};
         bool prevKeys[256] = {};
 
-        // DirectX 12 objects
-        ID3D12Device* device = nullptr;
-        ID3D12CommandQueue* commandQueue = nullptr;
-        IDXGISwapChain3* swapChain = nullptr;
-        ID3D12DescriptorHeap* rtvHeap = nullptr;
-        ID3D12Resource* renderTargets[2] = { nullptr, nullptr };
-        ID3D12CommandAllocator* commandAllocator = nullptr;
-        ID3D12GraphicsCommandList* commandList = nullptr;
-        ID3D12Resource* uploadBuffer = nullptr;
-        ID3D12Fence* fence = nullptr;
-        HANDLE fenceEvent = nullptr;
-        UINT64 fenceValue = 0;
-        UINT frameIndex = 0;
-        UINT rtvDescriptorSize = 0;
-
         // The pixels to write to.
         uint8* Pixels = nullptr;
+
+        struct PlatformBackend
+        {
+            virtual ~PlatformBackend() = default;
+            virtual bool InitWindow(uint32 width, uint32 height) = 0;
+            virtual void PumpMessages() = 0;
+            virtual void SetTitle(const char* title) = 0;
+            virtual void SetFullscreen(bool fullscreen, uint32 width, uint32 height) = 0;
+            virtual void ResizeWindow(uint32 width, uint32 height, bool isFullscreen) = 0;
+            virtual NativeWindowHandle GetWindowHandle() const = 0;
+            virtual void ShutdownWindow() = 0;
+        };
+
+        struct RendererBackend
+        {
+            virtual ~RendererBackend() = default;
+            virtual bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height) = 0;
+            virtual bool Render(const uint8* pixels, uint32 width, uint32 height, bool vsyncEnabled) = 0;
+            virtual bool Resize(uint32 width, uint32 height) = 0;
+            virtual void Shutdown() = 0;
+        };
+
+        #if defined(_WIN32)
+        struct PlatformWin32 : PlatformBackend
+        {
+            HWND hwnd = nullptr;
+            bool ownsClassRegistration = false;
+            static constexpr const wchar_t* c_windowClassName = L"ThirteenWindowClass";
+
+            bool InitWindow(uint32 width, uint32 height) override
+            {
+                WNDCLASSEXW wc = {};
+                wc.cbSize = sizeof(WNDCLASSEXW);
+                wc.style = CS_HREDRAW | CS_VREDRAW;
+                wc.lpfnWndProc = Thirteen::WndProc;
+                wc.hInstance = GetModuleHandle(nullptr);
+                wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+                wc.lpszClassName = c_windowClassName;
+                if (RegisterClassExW(&wc))
+                {
+                    ownsClassRegistration = true;
+                }
+                else if (GetLastError() == ERROR_CLASS_ALREADY_EXISTS)
+                {
+                    ownsClassRegistration = false;
+                }
+                else
+                {
+                    return false;
+                }
+
+                DWORD style = (WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX));
+                RECT rect = { 0, 0, (LONG)width, (LONG)height };
+                AdjustWindowRect(&rect, style, FALSE);
+
+                hwnd = CreateWindowExW(
+                    0,
+                    c_windowClassName,
+                    L"Thirteen",
+                    style,
+                    CW_USEDEFAULT, CW_USEDEFAULT,
+                    rect.right - rect.left,
+                    rect.bottom - rect.top,
+                    nullptr, nullptr,
+                    GetModuleHandle(nullptr),
+                    nullptr
+                );
+
+                if (!hwnd)
+                    return false;
+
+                ShowWindow(hwnd, SW_SHOW);
+                return true;
+            }
+
+            void PumpMessages() override
+            {
+                MSG msg;
+                while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+                {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+
+            void SetTitle(const char* title) override
+            {
+                if (hwnd)
+                    SetWindowTextA(hwnd, title);
+            }
+
+            void SetFullscreen(bool fullscreen, uint32 width, uint32 height) override
+            {
+                if (!hwnd)
+                    return;
+
+                if (fullscreen)
+                {
+                    SetWindowLongW(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+
+                    HMONITOR hMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                    MONITORINFO mi = { sizeof(mi) };
+                    GetMonitorInfo(hMonitor, &mi);
+
+                    SetWindowPos(hwnd, HWND_TOP,
+                        mi.rcMonitor.left,
+                        mi.rcMonitor.top,
+                        mi.rcMonitor.right - mi.rcMonitor.left,
+                        mi.rcMonitor.bottom - mi.rcMonitor.top,
+                        SWP_FRAMECHANGED);
+                }
+                else
+                {
+                    DWORD style = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+                    SetWindowLongW(hwnd, GWL_STYLE, style | WS_VISIBLE);
+
+                    RECT rect = { 0, 0, (LONG)width, (LONG)height };
+                    AdjustWindowRect(&rect, style, FALSE);
+
+                    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+                    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+                    int windowWidth = rect.right - rect.left;
+                    int windowHeight = rect.bottom - rect.top;
+                    int x = (screenWidth - windowWidth) / 2;
+                    int y = (screenHeight - windowHeight) / 2;
+
+                    SetWindowPos(hwnd, HWND_TOP, x, y, windowWidth, windowHeight, SWP_FRAMECHANGED);
+                }
+            }
+
+            void ResizeWindow(uint32 width, uint32 height, bool isFullscreen) override
+            {
+                if (!hwnd || isFullscreen)
+                    return;
+
+                DWORD style = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+                RECT rect = { 0, 0, (LONG)width, (LONG)height };
+                AdjustWindowRect(&rect, style, FALSE);
+
+                int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+                int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+                int windowWidth = rect.right - rect.left;
+                int windowHeight = rect.bottom - rect.top;
+                int x = (screenWidth - windowWidth) / 2;
+                int y = (screenHeight - windowHeight) / 2;
+
+                SetWindowPos(hwnd, HWND_TOP, x, y, windowWidth, windowHeight, SWP_FRAMECHANGED);
+            }
+
+            NativeWindowHandle GetWindowHandle() const override
+            {
+                return hwnd;
+            }
+
+            void ShutdownWindow() override
+            {
+                if (hwnd)
+                {
+                    DestroyWindow(hwnd);
+                    hwnd = nullptr;
+                }
+                if (ownsClassRegistration)
+                {
+                    UnregisterClassW(c_windowClassName, GetModuleHandle(nullptr));
+                    ownsClassRegistration = false;
+                }
+            }
+        };
+
+        struct RendererD3D12 : RendererBackend
+        {
+            ID3D12Device* device = nullptr;
+            ID3D12CommandQueue* commandQueue = nullptr;
+            IDXGISwapChain3* swapChain = nullptr;
+            ID3D12DescriptorHeap* rtvHeap = nullptr;
+            ID3D12Resource* renderTargets[2] = { nullptr, nullptr };
+            ID3D12CommandAllocator* commandAllocator = nullptr;
+            ID3D12GraphicsCommandList* commandList = nullptr;
+            ID3D12Resource* uploadBuffer = nullptr;
+            ID3D12Fence* fence = nullptr;
+            HANDLE fenceEvent = nullptr;
+            UINT64 fenceValue = 0;
+            UINT frameIndex = 0;
+            UINT rtvDescriptorSize = 0;
+            bool tearingSupported = false;
+
+            void WaitForGpu()
+            {
+                if (!fence || !commandQueue)
+                    return;
+
+                const UINT64 currentFenceValue = fenceValue;
+                commandQueue->Signal(fence, currentFenceValue);
+                fenceValue++;
+
+                if (fence->GetCompletedValue() < currentFenceValue)
+                {
+                    fence->SetEventOnCompletion(currentFenceValue, fenceEvent);
+                    WaitForSingleObject(fenceEvent, INFINITE);
+                }
+            }
+
+            void ReleaseRenderTargets()
+            {
+                if (renderTargets[0])
+                {
+                    renderTargets[0]->Release();
+                    renderTargets[0] = nullptr;
+                }
+                if (renderTargets[1])
+                {
+                    renderTargets[1]->Release();
+                    renderTargets[1] = nullptr;
+                }
+            }
+
+            bool CreateUploadBuffer(uint32 width, uint32 height)
+            {
+                D3D12_HEAP_PROPERTIES heapProps = {};
+                heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+                D3D12_RESOURCE_DESC bufferDesc = {};
+                bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+                bufferDesc.Width = width * height * 4;
+                bufferDesc.Height = 1;
+                bufferDesc.DepthOrArraySize = 1;
+                bufferDesc.MipLevels = 1;
+                bufferDesc.Format = DXGI_FORMAT_UNKNOWN;
+                bufferDesc.SampleDesc.Count = 1;
+                bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+                return SUCCEEDED(device->CreateCommittedResource(
+                    &heapProps,
+                    D3D12_HEAP_FLAG_NONE,
+                    &bufferDesc,
+                    D3D12_RESOURCE_STATE_GENERIC_READ,
+                    nullptr,
+                    IID_PPV_ARGS(&uploadBuffer)));
+            }
+
+            bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height) override
+            {
+                #if DX12VALIDATION()
+                ID3D12Debug* debugController = nullptr;
+                if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
+                {
+                    debugController->EnableDebugLayer();
+
+                    ID3D12Debug1* debugController1 = nullptr;
+                    if (SUCCEEDED(debugController->QueryInterface(IID_PPV_ARGS(&debugController1))))
+                    {
+                        debugController1->SetEnableGPUBasedValidation(TRUE);
+                        debugController1->Release();
+                    }
+
+                    debugController->Release();
+                }
+                #endif
+
+                if (FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device))))
+                    return false;
+
+                #if DX12VALIDATION()
+                ID3D12InfoQueue* infoQueue = nullptr;
+                if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&infoQueue))))
+                {
+                    infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
+                    infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+                    infoQueue->Release();
+                }
+                #endif
+
+                D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+                queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+                queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+                if (FAILED(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue))))
+                    return false;
+
+                IDXGIFactory4* factory = nullptr;
+                if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
+                    return false;
+
+                IDXGIFactory5* factory5 = nullptr;
+                if (SUCCEEDED(factory->QueryInterface(IID_PPV_ARGS(&factory5))))
+                {
+                    BOOL allowTearing = FALSE;
+                    if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing))))
+                    {
+                        tearingSupported = (allowTearing == TRUE);
+                    }
+                    factory5->Release();
+                }
+
+                DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
+                swapChainDesc.BufferCount = 2;
+                swapChainDesc.Width = width;
+                swapChainDesc.Height = height;
+                swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+                swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+                swapChainDesc.SampleDesc.Count = 1;
+                swapChainDesc.Flags = tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+
+                IDXGISwapChain1* swapChain1 = nullptr;
+                HRESULT hr = factory->CreateSwapChainForHwnd(
+                    commandQueue,
+                    hwnd,
+                    &swapChainDesc,
+                    nullptr,
+                    nullptr,
+                    &swapChain1
+                );
+                factory->Release();
+
+                if (FAILED(hr))
+                    return false;
+
+                swapChain1->QueryInterface(IID_PPV_ARGS(&swapChain));
+                swapChain1->Release();
+                frameIndex = swapChain->GetCurrentBackBufferIndex();
+
+                D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+                rtvHeapDesc.NumDescriptors = 2;
+                rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+                rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+                if (FAILED(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap))))
+                    return false;
+
+                rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+                D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+                for (UINT i = 0; i < 2; i++)
+                {
+                    if (FAILED(swapChain->GetBuffer(i, IID_PPV_ARGS(&renderTargets[i]))))
+                        return false;
+                    device->CreateRenderTargetView(renderTargets[i], nullptr, rtvHandle);
+                    rtvHandle.ptr += rtvDescriptorSize;
+                }
+
+                if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator))))
+                    return false;
+
+                if (FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator, nullptr, IID_PPV_ARGS(&commandList))))
+                    return false;
+                commandList->Close();
+
+                if (!CreateUploadBuffer(width, height))
+                    return false;
+
+                if (FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))))
+                    return false;
+
+                fenceValue = 1;
+                fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+                return fenceEvent != nullptr;
+            }
+
+            bool Render(const uint8* pixels, uint32 width, uint32 height, bool vsyncEnabled) override
+            {
+                WaitForGpu();
+                frameIndex = swapChain->GetCurrentBackBufferIndex();
+
+                void* mappedData = nullptr;
+                D3D12_RANGE readRange = { 1, 0 };
+                uploadBuffer->Map(0, &readRange, &mappedData);
+                memcpy(mappedData, pixels, width * height * 4);
+                uploadBuffer->Unmap(0, nullptr);
+
+                commandAllocator->Reset();
+                commandList->Reset(commandAllocator, nullptr);
+
+                D3D12_RESOURCE_BARRIER barrier = {};
+                barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+                barrier.Transition.pResource = renderTargets[frameIndex];
+                barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+                barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+                barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+                commandList->ResourceBarrier(1, &barrier);
+
+                D3D12_TEXTURE_COPY_LOCATION dst = {};
+                dst.pResource = renderTargets[frameIndex];
+                dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                dst.SubresourceIndex = 0;
+
+                D3D12_TEXTURE_COPY_LOCATION src = {};
+                src.pResource = uploadBuffer;
+                src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                src.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                src.PlacedFootprint.Footprint.Width = width;
+                src.PlacedFootprint.Footprint.Height = height;
+                src.PlacedFootprint.Footprint.Depth = 1;
+                src.PlacedFootprint.Footprint.RowPitch = width * 4;
+
+                commandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+                barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+                barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+                commandList->ResourceBarrier(1, &barrier);
+
+                commandList->Close();
+
+                ID3D12CommandList* cmdLists[] = { commandList };
+                commandQueue->ExecuteCommandLists(1, cmdLists);
+
+                UINT syncInterval = vsyncEnabled ? 1 : 0;
+                UINT presentFlags = (!vsyncEnabled && tearingSupported) ? DXGI_PRESENT_ALLOW_TEARING : 0;
+                return SUCCEEDED(swapChain->Present(syncInterval, presentFlags));
+            }
+
+            bool Resize(uint32 width, uint32 height) override
+            {
+                WaitForGpu();
+
+                ReleaseRenderTargets();
+
+                if (uploadBuffer)
+                {
+                    uploadBuffer->Release();
+                    uploadBuffer = nullptr;
+                }
+
+                HRESULT hr = swapChain->ResizeBuffers(2, width, height, DXGI_FORMAT_R8G8B8A8_UNORM,
+                    tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
+                if (FAILED(hr))
+                    return false;
+
+                D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
+                for (UINT i = 0; i < 2; i++)
+                {
+                    if (FAILED(swapChain->GetBuffer(i, IID_PPV_ARGS(&renderTargets[i]))))
+                        return false;
+                    device->CreateRenderTargetView(renderTargets[i], nullptr, rtvHandle);
+                    rtvHandle.ptr += rtvDescriptorSize;
+                }
+
+                if (!CreateUploadBuffer(width, height))
+                    return false;
+
+                frameIndex = swapChain->GetCurrentBackBufferIndex();
+                return true;
+            }
+
+            void Shutdown() override
+            {
+                WaitForGpu();
+
+                if (fenceEvent)
+                    CloseHandle(fenceEvent);
+                if (fence)
+                    fence->Release();
+                if (uploadBuffer)
+                    uploadBuffer->Release();
+                if (commandList)
+                    commandList->Release();
+                if (commandAllocator)
+                    commandAllocator->Release();
+                ReleaseRenderTargets();
+                if (rtvHeap)
+                    rtvHeap->Release();
+                if (swapChain)
+                    swapChain->Release();
+                if (commandQueue)
+                    commandQueue->Release();
+                if (device)
+                    device->Release();
+            }
+        };
+        #elif THIRTEEN_PLATFORM_MACOS
+        struct PlatformMetal : PlatformBackend
+        {
+            bool InitWindow(uint32, uint32) override { return true; }
+            void PumpMessages() override {}
+            void SetTitle(const char*) override {}
+            void SetFullscreen(bool, uint32, uint32) override {}
+            void ResizeWindow(uint32, uint32, bool) override {}
+            NativeWindowHandle GetWindowHandle() const override { return nullptr; }
+            void ShutdownWindow() override {}
+        };
+
+        struct RendererMetal : RendererBackend
+        {
+            bool Init(NativeWindowHandle, uint32, uint32) override { return false; }
+            bool Render(const uint8*, uint32, uint32, bool) override { return false; }
+            bool Resize(uint32, uint32) override { return false; }
+            void Shutdown() override {}
+        };
+        #else
+        struct PlatformStub : PlatformBackend
+        {
+            bool InitWindow(uint32, uint32) override { return true; }
+            void PumpMessages() override {}
+            void SetTitle(const char*) override {}
+            void SetFullscreen(bool, uint32, uint32) override {}
+            void ResizeWindow(uint32, uint32, bool) override {}
+            NativeWindowHandle GetWindowHandle() const override { return nullptr; }
+            void ShutdownWindow() override {}
+        };
+
+        struct RendererStub : RendererBackend
+        {
+            bool Init(NativeWindowHandle, uint32, uint32) override { return false; }
+            bool Render(const uint8*, uint32, uint32, bool) override { return false; }
+            bool Resize(uint32, uint32) override { return false; }
+            void Shutdown() override {}
+        };
+        #endif
+
+        PlatformBackend* platform = nullptr;
+        RendererBackend* renderer = nullptr;
     }
 
+    #if defined(_WIN32)
     LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
         using namespace Internal;
@@ -214,6 +749,7 @@ namespace Thirteen
         }
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
+    #endif
 
     uint8* Init(uint32 width, uint32 height, bool fullscreen)
     {
@@ -221,189 +757,47 @@ namespace Thirteen
         Internal::width = width;
         Internal::height = height;
         Internal::Pixels = (uint8*)malloc(width * height * 4);
-
-        // Create window
-        WNDCLASSEXW wc = {};
-        wc.cbSize = sizeof(WNDCLASSEXW);
-        wc.style = CS_HREDRAW | CS_VREDRAW;
-        wc.lpfnWndProc = WndProc;
-        wc.hInstance = GetModuleHandle(nullptr);
-        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.lpszClassName = L"ThirteenWindowClass";
-        RegisterClassExW(&wc);
-
-        DWORD style = (WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX));
-        RECT rect = { 0, 0, (LONG)width, (LONG)height };
-        AdjustWindowRect(&rect, style, FALSE);
-
-        hwnd = CreateWindowExW(
-            0,
-            L"ThirteenWindowClass",
-            L"Thirteen",
-            style,
-            CW_USEDEFAULT, CW_USEDEFAULT,
-            rect.right - rect.left,
-            rect.bottom - rect.top,
-            nullptr, nullptr,
-            GetModuleHandle(nullptr),
-            nullptr
-        );
-
-        if (!hwnd)
+        if (!Internal::Pixels)
             return nullptr;
 
-        ShowWindow(hwnd, SW_SHOW);
-
-        // Enable debug layer in debug builds
-        #if DX12VALIDATION()
-        ID3D12Debug* debugController = nullptr;
-        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
-        {
-            debugController->EnableDebugLayer();
-
-            // Enable GPU-based validation
-            ID3D12Debug1* debugController1 = nullptr;
-            if (SUCCEEDED(debugController->QueryInterface(IID_PPV_ARGS(&debugController1))))
-            {
-                debugController1->SetEnableGPUBasedValidation(TRUE);
-                debugController1->Release();
-            }
-
-            debugController->Release();
-        }
+        #if defined(_WIN32)
+        platform = new PlatformWin32();
+        #elif THIRTEEN_PLATFORM_MACOS
+        platform = new PlatformMetal();
+        #else
+        platform = new PlatformStub();
         #endif
-
-        // Create device
-        if (FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device))))
-            return nullptr;
-
-        #if DX12VALIDATION()
-        // Break on errors and corruption
-        ID3D12InfoQueue* infoQueue = nullptr;
-        if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&infoQueue))))
+        if (!platform->InitWindow(width, height))
         {
-            infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
-            infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
-            infoQueue->Release();
+            delete platform;
+            platform = nullptr;
+            free(Internal::Pixels);
+            Internal::Pixels = nullptr;
+            return nullptr;
         }
+
+        #if defined(_WIN32)
+        renderer = new RendererD3D12();
+        #elif THIRTEEN_PLATFORM_MACOS
+        renderer = new RendererMetal();
+        #else
+        renderer = new RendererStub();
         #endif
-
-        // Create command queue
-        D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-        queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-        queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-        if (FAILED(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue))))
-            return nullptr;
-
-        // Create swap chain
-        IDXGIFactory4* factory = nullptr;
-        if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
-            return nullptr;
-
-        // Check for tearing support
-        IDXGIFactory5* factory5 = nullptr;
-        if (SUCCEEDED(factory->QueryInterface(IID_PPV_ARGS(&factory5))))
+        if (!renderer->Init(platform->GetWindowHandle(), width, height))
         {
-            BOOL allowTearing = FALSE;
-            if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing))))
-            {
-                tearingSupported = (allowTearing == TRUE);
-            }
-            factory5->Release();
+            renderer->Shutdown();
+            delete renderer;
+            renderer = nullptr;
+            platform->ShutdownWindow();
+            delete platform;
+            platform = nullptr;
+            free(Internal::Pixels);
+            Internal::Pixels = nullptr;
+            return nullptr;
         }
-
-        DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
-        swapChainDesc.BufferCount = 2;
-        swapChainDesc.Width = width;
-        swapChainDesc.Height = height;
-        swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        swapChainDesc.SampleDesc.Count = 1;
-        swapChainDesc.Flags = tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
-
-        IDXGISwapChain1* swapChain1 = nullptr;
-        HRESULT hr = factory->CreateSwapChainForHwnd(
-            commandQueue,
-            hwnd,
-            &swapChainDesc,
-            nullptr,
-            nullptr,
-            &swapChain1
-        );
-        factory->Release();
-
-        if (FAILED(hr))
-            return nullptr;
-
-        swapChain1->QueryInterface(IID_PPV_ARGS(&swapChain));
-        swapChain1->Release();
-        frameIndex = swapChain->GetCurrentBackBufferIndex();
-
-        // Create RTV descriptor heap
-        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-        rtvHeapDesc.NumDescriptors = 2;
-        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-        rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-        if (FAILED(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvHeap))))
-            return nullptr;
-
-        rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
-        // Create RTVs
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
-        for (UINT i = 0; i < 2; i++)
-        {
-            if (FAILED(swapChain->GetBuffer(i, IID_PPV_ARGS(&renderTargets[i]))))
-                return nullptr;
-            device->CreateRenderTargetView(renderTargets[i], nullptr, rtvHandle);
-            rtvHandle.ptr += rtvDescriptorSize;
-        }
-
-        // Create command allocator
-        if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocator))))
-            return nullptr;
-
-        // Create command list
-        if (FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocator, nullptr, IID_PPV_ARGS(&commandList))))
-            return nullptr;
-        commandList->Close();
-
-        // Create upload buffer
-        D3D12_HEAP_PROPERTIES heapProps = {};
-        heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-
-        D3D12_RESOURCE_DESC bufferDesc = {};
-        bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        bufferDesc.Width = width * height * 4;
-        bufferDesc.Height = 1;
-        bufferDesc.DepthOrArraySize = 1;
-        bufferDesc.MipLevels = 1;
-        bufferDesc.Format = DXGI_FORMAT_UNKNOWN;
-        bufferDesc.SampleDesc.Count = 1;
-        bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-        if (FAILED(device->CreateCommittedResource(
-            &heapProps,
-            D3D12_HEAP_FLAG_NONE,
-            &bufferDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&uploadBuffer))))
-            return nullptr;
-
-        // Create synchronization objects
-        if (FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence))))
-            return nullptr;
-
-        fenceValue = 1;
-        fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-        if (!fenceEvent)
-            return nullptr;
 
         // Initialize frame timing
-        QueryPerformanceFrequency(&perfFrequency);
-        QueryPerformanceCounter(&lastFrameTime);
+        lastFrameTime = NowSeconds();
 
         if (fullscreen)
             SetFullscreen(true);
@@ -422,9 +816,8 @@ namespace Thirteen
         memcpy(prevKeys, keys, sizeof(keys));
 
         // Calculate frame time
-        LARGE_INTEGER currentTime;
-        QueryPerformanceCounter(&currentTime);
-        lastDeltaTime = (double)(currentTime.QuadPart - lastFrameTime.QuadPart) / (double)perfFrequency.QuadPart;
+        double currentTime = NowSeconds();
+        lastDeltaTime = currentTime - lastFrameTime;
         lastFrameTime = currentTime;
 
         // Track frame times
@@ -445,87 +838,20 @@ namespace Thirteen
         {
             titleUpdateTimer = 0.0;
             char titleBuffer[256];
-            sprintf_s(titleBuffer, "%s - %.1f FPS (%.1f ms)", appName.c_str(), averageFPS, 1000.0f / averageFPS);
-            SetWindowTextA(hwnd, titleBuffer);
+            std::snprintf(titleBuffer, sizeof(titleBuffer), "%s - %.1f FPS (%.1f ms)", appName.c_str(), averageFPS, 1000.0f / averageFPS);
+            if (platform)
+                platform->SetTitle(titleBuffer);
         }
 
         // Process messages
-        MSG msg;
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
-        {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
+        if (platform)
+            platform->PumpMessages();
 
         if (shouldQuit)
             return false;
-
-        // Wait for previous frame
-        const UINT64 currentFenceValue = fenceValue;
-        commandQueue->Signal(fence, currentFenceValue);
-        fenceValue++;
-
-        if (fence->GetCompletedValue() < currentFenceValue)
-        {
-            fence->SetEventOnCompletion(currentFenceValue, fenceEvent);
-            WaitForSingleObject(fenceEvent, INFINITE);
-        }
-
-        frameIndex = swapChain->GetCurrentBackBufferIndex();
-
-        // Upload pixel data
-        void* mappedData = nullptr;
-        D3D12_RANGE readRange = { 1, 0 };
-        uploadBuffer->Map(0, &readRange, &mappedData);
-        memcpy(mappedData, Internal::Pixels, width * height * 4);
-        uploadBuffer->Unmap(0, nullptr);
-
-        // Record commands
-        commandAllocator->Reset();
-        commandList->Reset(commandAllocator, nullptr);
-
-        // Transition render target to copy dest
-        D3D12_RESOURCE_BARRIER barrier = {};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.pResource = renderTargets[frameIndex];
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        commandList->ResourceBarrier(1, &barrier);
-
-        // Copy from upload buffer to render target
-        D3D12_TEXTURE_COPY_LOCATION dst = {};
-        dst.pResource = renderTargets[frameIndex];
-        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        dst.SubresourceIndex = 0;
-
-        D3D12_TEXTURE_COPY_LOCATION src = {};
-        src.pResource = uploadBuffer;
-        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        src.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        src.PlacedFootprint.Footprint.Width = width;
-        src.PlacedFootprint.Footprint.Height = height;
-        src.PlacedFootprint.Footprint.Depth = 1;
-        src.PlacedFootprint.Footprint.RowPitch = width * 4;
-
-        commandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-
-        // Transition render target to present
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-        commandList->ResourceBarrier(1, &barrier);
-
-        commandList->Close();
-
-        // Execute command list
-        ID3D12CommandList* cmdLists[] = { commandList };
-        commandQueue->ExecuteCommandLists(1, cmdLists);
-
-        // Present
-        UINT syncInterval = vsyncEnabled ? 1 : 0;
-        UINT presentFlags = (!vsyncEnabled && tearingSupported) ? DXGI_PRESENT_ALLOW_TEARING : 0;
-        swapChain->Present(syncInterval, presentFlags);
-
+        if (!renderer)
+            return false;
+        renderer->Render(Internal::Pixels, width, height, vsyncEnabled);
         return !shouldQuit;
     }
 
@@ -551,43 +877,8 @@ namespace Thirteen
             return;
 
         isFullscreen = fullscreen;
-
-        if (fullscreen)
-        {
-            // Switch to fullscreen (borderless window)
-            SetWindowLongW(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-
-            // Get monitor dimensions
-            HMONITOR hMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO mi = { sizeof(mi) };
-            GetMonitorInfo(hMonitor, &mi);
-
-            SetWindowPos(hwnd, HWND_TOP,
-                mi.rcMonitor.left,
-                mi.rcMonitor.top,
-                mi.rcMonitor.right - mi.rcMonitor.left,
-                mi.rcMonitor.bottom - mi.rcMonitor.top,
-                SWP_FRAMECHANGED);
-        }
-        else
-        {
-            // Switch to windowed mode
-            DWORD style = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
-            SetWindowLongW(hwnd, GWL_STYLE, style | WS_VISIBLE);
-
-            RECT rect = { 0, 0, (LONG)width, (LONG)height };
-            AdjustWindowRect(&rect, style, FALSE);
-
-            // Center window on screen
-            int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-            int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-            int windowWidth = rect.right - rect.left;
-            int windowHeight = rect.bottom - rect.top;
-            int x = (screenWidth - windowWidth) / 2;
-            int y = (screenHeight - windowHeight) / 2;
-
-            SetWindowPos(hwnd, HWND_TOP, x, y, windowWidth, windowHeight, SWP_FRAMECHANGED);
-        }
+        if (platform)
+            platform->SetFullscreen(fullscreen, width, height);
     }
 
     bool GetFullscreen()
@@ -612,39 +903,6 @@ namespace Thirteen
         if (width == Internal::width && height == Internal::height)
             return Pixels;
 
-        // Wait for GPU to finish
-        if (fence && commandQueue)
-        {
-            const UINT64 currentFenceValue = fenceValue;
-            commandQueue->Signal(fence, currentFenceValue);
-            fenceValue++;
-
-            if (fence->GetCompletedValue() < currentFenceValue)
-            {
-                fence->SetEventOnCompletion(currentFenceValue, fenceEvent);
-                WaitForSingleObject(fenceEvent, INFINITE);
-            }
-        }
-
-        // Release old render targets
-        if (renderTargets[0])
-        {
-            renderTargets[0]->Release();
-            renderTargets[0] = nullptr;
-        }
-        if (renderTargets[1])
-        {
-            renderTargets[1]->Release();
-            renderTargets[1] = nullptr;
-        }
-
-        // Release old upload buffer
-        if (uploadBuffer)
-        {
-            uploadBuffer->Release();
-            uploadBuffer = nullptr;
-        }
-
         // Reallocate pixel buffer
         Pixels = (uint8*)realloc(Pixels, width * height * 4);
         if (!Pixels)
@@ -653,64 +911,11 @@ namespace Thirteen
         // Update dimensions
         Internal::width = width;
         Internal::height = height;
-
-        // Resize swap chain buffers
-        HRESULT hr = swapChain->ResizeBuffers(2, width, height, DXGI_FORMAT_R8G8B8A8_UNORM,
-            tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0);
-        if (FAILED(hr))
+        if (!renderer || !renderer->Resize(width, height))
             return nullptr;
 
-        // Recreate render target views
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvHeap->GetCPUDescriptorHandleForHeapStart();
-        for (UINT i = 0; i < 2; i++)
-        {
-            if (FAILED(swapChain->GetBuffer(i, IID_PPV_ARGS(&renderTargets[i]))))
-                return nullptr;
-            device->CreateRenderTargetView(renderTargets[i], nullptr, rtvHandle);
-            rtvHandle.ptr += rtvDescriptorSize;
-        }
-
-        // Recreate upload buffer
-        D3D12_HEAP_PROPERTIES heapProps = {};
-        heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-
-        D3D12_RESOURCE_DESC bufferDesc = {};
-        bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        bufferDesc.Width = width * height * 4;
-        bufferDesc.Height = 1;
-        bufferDesc.DepthOrArraySize = 1;
-        bufferDesc.MipLevels = 1;
-        bufferDesc.Format = DXGI_FORMAT_UNKNOWN;
-        bufferDesc.SampleDesc.Count = 1;
-        bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-        if (FAILED(device->CreateCommittedResource(
-            &heapProps,
-            D3D12_HEAP_FLAG_NONE,
-            &bufferDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&uploadBuffer))))
-            return nullptr;
-
-        frameIndex = swapChain->GetCurrentBackBufferIndex();
-
-        // Resize window if not fullscreen
-        if (!isFullscreen)
-        {
-            DWORD style = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
-            RECT rect = { 0, 0, (LONG)width, (LONG)height };
-            AdjustWindowRect(&rect, style, FALSE);
-
-            int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-            int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-            int windowWidth = rect.right - rect.left;
-            int windowHeight = rect.bottom - rect.top;
-            int x = (screenWidth - windowWidth) / 2;
-            int y = (screenHeight - windowHeight) / 2;
-
-            SetWindowPos(hwnd, HWND_TOP, x, y, windowWidth, windowHeight, SWP_FRAMECHANGED);
-        }
+        if (platform)
+            platform->ResizeWindow(width, height, isFullscreen);
 
         return Pixels;
     }
@@ -764,49 +969,18 @@ namespace Thirteen
     void Shutdown()
     {
         using namespace Internal;
-
-        // Wait for GPU to finish
-        if (fence && commandQueue)
+        if (renderer)
         {
-            const UINT64 currentFenceValue = fenceValue;
-            commandQueue->Signal(fence, currentFenceValue);
-            fenceValue++;
-
-            if (fence->GetCompletedValue() < currentFenceValue)
-            {
-                fence->SetEventOnCompletion(currentFenceValue, fenceEvent);
-                WaitForSingleObject(fenceEvent, INFINITE);
-            }
+            renderer->Shutdown();
+            delete renderer;
+            renderer = nullptr;
         }
 
-        // Release resources
-        if (fenceEvent)
-            CloseHandle(fenceEvent);
-        if (fence)
-            fence->Release();
-        if (uploadBuffer)
-            uploadBuffer->Release();
-        if (commandList)
-            commandList->Release();
-        if (commandAllocator)
-            commandAllocator->Release();
-        if (renderTargets[0])
-            renderTargets[0]->Release();
-        if (renderTargets[1])
-            renderTargets[1]->Release();
-        if (rtvHeap)
-            rtvHeap->Release();
-        if (swapChain)
-            swapChain->Release();
-        if (commandQueue)
-            commandQueue->Release();
-        if (device)
-            device->Release();
-
-        if (hwnd)
+        if (platform)
         {
-            DestroyWindow(hwnd);
-            UnregisterClassW(L"ThirteenWindowClass", GetModuleHandle(nullptr));
+            platform->ShutdownWindow();
+            delete platform;
+            platform = nullptr;
         }
 
         free(Internal::Pixels);
