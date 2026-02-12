@@ -162,35 +162,14 @@ namespace Thirteen
         // The pixels to write to.
         uint8* Pixels = nullptr;
 
-        struct PlatformBackend
-        {
-            virtual ~PlatformBackend() = default;
-            virtual bool InitWindow(uint32 width, uint32 height) = 0;
-            virtual void PumpMessages() = 0;
-            virtual void SetTitle(const char* title) = 0;
-            virtual void SetFullscreen(bool fullscreen, uint32 width, uint32 height) = 0;
-            virtual void ResizeWindow(uint32 width, uint32 height, bool isFullscreen) = 0;
-            virtual NativeWindowHandle GetWindowHandle() const = 0;
-            virtual void ShutdownWindow() = 0;
-        };
-
-        struct RendererBackend
-        {
-            virtual ~RendererBackend() = default;
-            virtual bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height) = 0;
-            virtual bool Render(const uint8* pixels, uint32 width, uint32 height, bool vsyncEnabled) = 0;
-            virtual bool Resize(uint32 width, uint32 height) = 0;
-            virtual void Shutdown() = 0;
-        };
-
         #if defined(_WIN32)
-        struct PlatformWin32 : PlatformBackend
+        struct PlatformWin32
         {
             HWND hwnd = nullptr;
             bool ownsClassRegistration = false;
             static constexpr const wchar_t* c_windowClassName = L"ThirteenWindowClass";
 
-            bool InitWindow(uint32 width, uint32 height) override
+            bool InitWindow(uint32 width, uint32 height)
             {
                 WNDCLASSEXW wc = {};
                 wc.cbSize = sizeof(WNDCLASSEXW);
@@ -236,7 +215,7 @@ namespace Thirteen
                 return true;
             }
 
-            void PumpMessages() override
+            void PumpMessages()
             {
                 MSG msg;
                 while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
@@ -246,13 +225,13 @@ namespace Thirteen
                 }
             }
 
-            void SetTitle(const char* title) override
+            void SetTitle(const char* title)
             {
                 if (hwnd)
                     SetWindowTextA(hwnd, title);
             }
 
-            void SetFullscreen(bool fullscreen, uint32 width, uint32 height) override
+            void SetFullscreen(bool fullscreen, uint32 width, uint32 height)
             {
                 if (!hwnd)
                     return;
@@ -291,7 +270,7 @@ namespace Thirteen
                 }
             }
 
-            void ResizeWindow(uint32 width, uint32 height, bool isFullscreen) override
+            void ResizeWindow(uint32 width, uint32 height, bool isFullscreen)
             {
                 if (!hwnd || isFullscreen)
                     return;
@@ -310,12 +289,12 @@ namespace Thirteen
                 SetWindowPos(hwnd, HWND_TOP, x, y, windowWidth, windowHeight, SWP_FRAMECHANGED);
             }
 
-            NativeWindowHandle GetWindowHandle() const override
+            NativeWindowHandle GetWindowHandle() const
             {
                 return hwnd;
             }
 
-            void ShutdownWindow() override
+            void ShutdownWindow()
             {
                 if (hwnd)
                 {
@@ -330,7 +309,7 @@ namespace Thirteen
             }
         };
 
-        struct RendererD3D12 : RendererBackend
+        struct RendererD3D12
         {
             ID3D12Device* device = nullptr;
             ID3D12CommandQueue* commandQueue = nullptr;
@@ -401,7 +380,7 @@ namespace Thirteen
                     IID_PPV_ARGS(&uploadBuffer)));
             }
 
-            bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height) override
+            bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height)
             {
                 #if DX12VALIDATION()
                 ID3D12Debug* debugController = nullptr;
@@ -518,7 +497,7 @@ namespace Thirteen
                 return fenceEvent != nullptr;
             }
 
-            bool Render(const uint8* pixels, uint32 width, uint32 height, bool vsyncEnabled) override
+            bool Render(const uint8* pixels, uint32 width, uint32 height, bool vsyncEnabled)
             {
                 WaitForGpu();
                 frameIndex = swapChain->GetCurrentBackBufferIndex();
@@ -570,7 +549,7 @@ namespace Thirteen
                 return SUCCEEDED(swapChain->Present(syncInterval, presentFlags));
             }
 
-            bool Resize(uint32 width, uint32 height) override
+            bool Resize(uint32 width, uint32 height)
             {
                 WaitForGpu();
 
@@ -603,7 +582,7 @@ namespace Thirteen
                 return true;
             }
 
-            void Shutdown() override
+            void Shutdown()
             {
                 WaitForGpu();
 
@@ -634,15 +613,13 @@ namespace Thirteen
         using NSUInteger = unsigned long;
         using NSInteger = long;
 
-        struct MTLSize
-        {
+        struct MTLSize        {
             NSUInteger width;
             NSUInteger height;
             NSUInteger depth;
         };
 
-        struct MTLOrigin
-        {
+        struct MTLOrigin        {
             NSUInteger x;
             NSUInteger y;
             NSUInteger z;
@@ -653,13 +630,13 @@ namespace Thirteen
             return sel_registerName(name);
         }
 
-        struct PlatformMetal : PlatformBackend
+        struct PlatformMetal
         {
             id app = nullptr;
             id window = nullptr;
             id contentView = nullptr;
 
-            bool InitWindow(uint32 width, uint32 height) override
+            bool InitWindow(uint32 width, uint32 height)
             {
                 id nsApplicationClass = (id)objc_getClass("NSApplication");
                 app = ((id(*)(id, SEL))objc_msgSend)(nsApplicationClass, Sel("sharedApplication"));
@@ -697,7 +674,7 @@ namespace Thirteen
                 return true;
             }
 
-            void PumpMessages() override
+            void PumpMessages()
             {
                 if (!app)
                     return;
@@ -773,7 +750,7 @@ namespace Thirteen
                 }
             }
 
-            void SetTitle(const char* title) override
+            void SetTitle(const char* title)
             {
                 if (!window)
                     return;
@@ -782,13 +759,13 @@ namespace Thirteen
                 ((void(*)(id, SEL, id))objc_msgSend)(window, Sel("setTitle:"), nsTitle);
             }
 
-            void SetFullscreen(bool, uint32, uint32) override
+            void SetFullscreen(bool, uint32, uint32)
             {
                 if (window)
                     ((void(*)(id, SEL, id))objc_msgSend)(window, Sel("toggleFullScreen:"), nullptr);
             }
 
-            void ResizeWindow(uint32 width, uint32 height, bool isFullscreen) override
+            void ResizeWindow(uint32 width, uint32 height, bool isFullscreen)
             {
                 if (!window || isFullscreen)
                     return;
@@ -796,12 +773,12 @@ namespace Thirteen
                 ((void(*)(id, SEL, CGSize))objc_msgSend)(window, Sel("setContentSize:"), contentSize);
             }
 
-            NativeWindowHandle GetWindowHandle() const override
+            NativeWindowHandle GetWindowHandle() const
             {
                 return contentView;
             }
 
-            void ShutdownWindow() override
+            void ShutdownWindow()
             {
                 if (window)
                 {
@@ -813,7 +790,7 @@ namespace Thirteen
             }
         };
 
-        struct RendererMetal : RendererBackend
+        struct RendererMetal
         {
             id device = nullptr;
             id commandQueue = nullptr;
@@ -850,7 +827,7 @@ namespace Thirteen
                 return true;
             }
 
-            bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height) override
+            bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height)
             {
                 hostView = hwnd;
                 device = (id)MTLCreateSystemDefaultDevice();
@@ -886,7 +863,7 @@ namespace Thirteen
                 return EnsureUploadBuffer(width, height);
             }
 
-            bool Render(const uint8* pixels, uint32 width, uint32 height, bool) override
+            bool Render(const uint8* pixels, uint32 width, uint32 height, bool)
             {
                 if (!metalLayer || !commandQueue || !EnsureUploadBuffer(width, height))
                     return false;
@@ -931,7 +908,7 @@ namespace Thirteen
                 return true;
             }
 
-            bool Resize(uint32 width, uint32 height) override
+            bool Resize(uint32 width, uint32 height)
             {
                 bufferWidth = width;
                 bufferHeight = height;
@@ -943,7 +920,7 @@ namespace Thirteen
                 return EnsureUploadBuffer(width, height);
             }
 
-            void Shutdown() override
+            void Shutdown()
             {
                 if (uploadBuffer)
                 {
@@ -964,25 +941,42 @@ namespace Thirteen
             }
         };
         #else
-        struct PlatformStub : PlatformBackend
+        struct PlatformStub
         {
-            bool InitWindow(uint32, uint32) override { return true; }
-            void PumpMessages() override {}
-            void SetTitle(const char*) override {}
-            void SetFullscreen(bool, uint32, uint32) override {}
-            void ResizeWindow(uint32, uint32, bool) override {}
-            NativeWindowHandle GetWindowHandle() const override { return nullptr; }
-            void ShutdownWindow() override {}
+            bool InitWindow(uint32, uint32) { return true; }
+            void PumpMessages() {}
+            void SetTitle(const char*) {}
+            void SetFullscreen(bool, uint32, uint32) {}
+            void ResizeWindow(uint32, uint32, bool) {}
+            NativeWindowHandle GetWindowHandle() const { return nullptr; }
+            void ShutdownWindow() {}
         };
 
-        struct RendererStub : RendererBackend
+        struct RendererStub
         {
-            bool Init(NativeWindowHandle, uint32, uint32) override { return false; }
-            bool Render(const uint8*, uint32, uint32, bool) override { return false; }
-            bool Resize(uint32, uint32) override { return false; }
-            void Shutdown() override {}
+            bool Init(NativeWindowHandle, uint32, uint32) { return false; }
+            bool Render(const uint8*, uint32, uint32, bool) { return false; }
+            bool Resize(uint32, uint32) { return false; }
+            void Shutdown() {}
         };
         #endif
+
+        struct BackendTraits
+        {
+            #if defined(_WIN32)
+            using Platform = PlatformWin32;
+            using Renderer = RendererD3D12;
+            #elif THIRTEEN_PLATFORM_MACOS
+            using Platform = PlatformMetal;
+            using Renderer = RendererMetal;
+            #else
+            using Platform = PlatformStub;
+            using Renderer = RendererStub;
+            #endif
+        };
+
+        using PlatformBackend = BackendTraits::Platform;
+        using RendererBackend = BackendTraits::Renderer;
 
         PlatformBackend* platform = nullptr;
         RendererBackend* renderer = nullptr;
@@ -1080,13 +1074,7 @@ namespace Thirteen
         if (!Internal::Pixels)
             return nullptr;
 
-        #if defined(_WIN32)
-        platform = new PlatformWin32();
-        #elif THIRTEEN_PLATFORM_MACOS
-        platform = new PlatformMetal();
-        #else
-        platform = new PlatformStub();
-        #endif
+        platform = new PlatformBackend();
         if (!platform->InitWindow(width, height))
         {
             delete platform;
@@ -1096,13 +1084,7 @@ namespace Thirteen
             return nullptr;
         }
 
-        #if defined(_WIN32)
-        renderer = new RendererD3D12();
-        #elif THIRTEEN_PLATFORM_MACOS
-        renderer = new RendererMetal();
-        #else
-        renderer = new RendererStub();
-        #endif
+        renderer = new RendererBackend();
         if (!renderer->Init(platform->GetWindowHandle(), width, height))
         {
             renderer->Shutdown();
