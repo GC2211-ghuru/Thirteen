@@ -36,6 +36,12 @@ int main()
 }
 ```
 
+## Credits
+
+Alan Wolfe - API, examples and Win32/DX12 implementation
+
+Francesco Carucci - MacOS/Metal implementation
+
 ## Examples
 
 ### Simple
