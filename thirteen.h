@@ -13,14 +13,33 @@ Francesco Carucci - MacOS/Metal implementation
 
 #pragma once
 
-#define DX12VALIDATION() (_DEBUG && false)
+// ========== Platform Detection ==========
 
 #if defined(_WIN32)
+    #define THIRTEEN_PLATFORM_WINDOWS
+#elif defined(__APPLE__) && defined(TARGET_OS_OSX) && TARGET_OS_OSX
+    #define THIRTEEN_PLATFORM_MACOS
+#elif defined(__linux__)
+    #define THIRTEEN_PLATFORM_LINUX
+#else
+    #error Unsupported platform
+#endif
+
+// ========== Platform-Specific Includes ==========
+
+#ifdef THIRTEEN_PLATFORM_WINDOWS
     #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
     #include <d3d12.h>
     #include <dxgi1_6.h>
-#elif defined(__APPLE__)
+
+    #pragma comment(lib, "d3d12.lib")
+    #pragma comment(lib, "dxgi.lib")
+
+    #define DX12VALIDATION() (_DEBUG && false)
+#endif
+
+#ifdef THIRTEEN_PLATFORM_MACOS
     #include <objc/objc.h>
     #include <objc/runtime.h>
     #include <objc/message.h>
@@ -28,18 +47,23 @@ Francesco Carucci - MacOS/Metal implementation
     #include <TargetConditionals.h>
 #endif
 
+#ifdef THIRTEEN_PLATFORM_LINUX
+    #include <dlfcn.h>
+    #include <X11/Xlib.h>
+    #include <GL/gl.h>
+    #include <GL/glx.h>
+    #include <GL/glext.h>
+#endif
+
+// ========== Common Includes ==========
+
 #include <cstdlib>
 #include <cstring>
 #include <chrono>
 #include <cstdio>
 #include <string>
 
-#if defined(_WIN32)
-    #pragma comment(lib, "d3d12.lib")
-    #pragma comment(lib, "dxgi.lib")
-#endif
-
-#if !defined(_WIN32)
+#if !defined(THIRTEEN_PLATFORM_WINDOWS)
     #ifndef VK_ESCAPE
         #define VK_ESCAPE 0x1B
     #endif
@@ -48,14 +72,12 @@ Francesco Carucci - MacOS/Metal implementation
     #endif
 #endif
 
-#if defined(__APPLE__) && defined(TARGET_OS_OSX) && TARGET_OS_OSX
-    #define THIRTEEN_PLATFORM_MACOS 1
-#else
-    #define THIRTEEN_PLATFORM_MACOS 0
-#endif
+// ========== Public Interface ==========
 
 namespace Thirteen
 {
+    // ========== Type Definitions ==========
+
     using uint8 = unsigned char;
     using uint32 = unsigned int;
 
@@ -115,18 +137,12 @@ namespace Thirteen
     // Returns whether a keyboard key was pressed in the previous frame (use Windows virtual key codes).
     [[nodiscard]] bool GetKeyLastFrame(int keyCode);
 
-    #if defined(_WIN32)
-    // Internal window procedure.
-    LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-    #endif
+}
 
-    #if defined(_WIN32)
-        using NativeWindowHandle = HWND;
-    #else
-        using NativeWindowHandle = void*;
-    #endif
+// ========== Implementation ==========
 
-    // ========================================
+namespace Thirteen
+{
 
     // Internal state
     namespace Internal
@@ -165,19 +181,24 @@ namespace Thirteen
         // The pixels to write to.
         uint8* Pixels = nullptr;
 
-        #if defined(_WIN32)
+        #if defined(THIRTEEN_PLATFORM_WINDOWS)
+
+        using NativeWindowHandle = HWND;
+
         struct PlatformWin32
         {
             HWND hwnd = nullptr;
             bool ownsClassRegistration = false;
             static constexpr const wchar_t* c_windowClassName = L"ThirteenWindowClass";
 
+            static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
             bool InitWindow(uint32 width, uint32 height)
             {
                 WNDCLASSEXW wc = {};
                 wc.cbSize = sizeof(WNDCLASSEXW);
                 wc.style = CS_HREDRAW | CS_VREDRAW;
-                wc.lpfnWndProc = Thirteen::WndProc;
+                wc.lpfnWndProc = WndProc;
                 wc.hInstance = GetModuleHandle(nullptr);
                 wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
                 wc.lpszClassName = c_windowClassName;
@@ -383,8 +404,10 @@ namespace Thirteen
                     IID_PPV_ARGS(&uploadBuffer)));
             }
 
-            bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height)
+            bool Init(PlatformWin32* platform, uint32 width, uint32 height)
             {
+                NativeWindowHandle hwnd = platform->GetWindowHandle();
+
                 #if DX12VALIDATION()
                 ID3D12Debug* debugController = nullptr;
                 if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
@@ -610,7 +633,11 @@ namespace Thirteen
                     device->Release();
             }
         };
-        #elif THIRTEEN_PLATFORM_MACOS
+
+        #elif defined(THIRTEEN_PLATFORM_MACOS)
+
+        using NativeWindowHandle = void*;
+
         extern "C" void* MTLCreateSystemDefaultDevice(void);
 
         using NSUInteger = unsigned long;
@@ -860,8 +887,10 @@ namespace Thirteen
                 return true;
             }
 
-            bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height)
+            bool Init(PlatformMetal* platform, uint32 width, uint32 height)
             {
+                NativeWindowHandle hwnd = platform->GetWindowHandle();
+
                 hostView = hwnd;
                 device = (id)MTLCreateSystemDefaultDevice();
                 if (!device)
@@ -973,7 +1002,379 @@ namespace Thirteen
                 uploadSize = 0;
             }
         };
+
+        #elif defined(THIRTEEN_PLATFORM_LINUX)
+
+        using NativeWindowHandle = int;
+
+        struct PlatformLinuxX11GL
+        {
+            void * x11Library = nullptr;
+            void * glLibrary = nullptr;
+
+            Display * x11Display = nullptr;
+            Window x11Window = 0;
+            Atom closeWindowAtom = 0;
+
+            GLXContext glxContext = nullptr;
+
+            int (*XFree)(void*) = nullptr;
+            int (*XStoreName)(Display*, Window, const char*) = nullptr;
+            int (*XPending)(Display*) = nullptr;
+            int (*XNextEvent)(Display*, XEvent*) = nullptr;
+            int (*XDestroyWindow)(Display*, Window) = nullptr;
+            int (*XCloseDisplay)(Display*) = nullptr;
+            XSizeHints* (*XAllocSizeHints)() = nullptr;
+            void (*XSetWMNormalHints)(Display*, Window, XSizeHints*) = nullptr;
+            int (*XResizeWindow)(Display*, Window, unsigned, unsigned) = nullptr;
+
+            void (*glXSwapBuffers)(Display*, GLXDrawable) = nullptr;
+            void (*glXDestroyContext)(Display*, GLXContext ctx) = nullptr;
+
+            void (*glClear)(GLbitfield) = nullptr;
+            void (*glGenTextures)(GLsizei, GLuint*) = nullptr;
+            void (*glDeleteTextures)(GLsizei, GLuint*) = nullptr;
+            void (*glBindTexture)(GLenum, GLuint) = nullptr;
+            void (*glTexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const GLvoid*) = nullptr;
+            void (*glTexSubImage2D)(GLenum, GLint, GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, const GLvoid*) = nullptr;
+            void (*glGenFramebuffers)(GLsizei, GLuint*) = nullptr;
+            void (*glDeleteFramebuffers)(GLsizei, GLuint*) = nullptr;
+            void (*glBindFramebuffer)(GLenum, GLuint) = nullptr;
+            void (*glFramebufferTexture)(GLenum, GLenum, GLuint, GLint) = nullptr;
+            void (*glBlitFramebuffer)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum) = nullptr;
+
+            GLuint texture = 0;
+            GLuint framebuffer = 0;
+
+            bool InitWindow(uint32 width, uint32 height)
+            {
+                // Since GCC doesn't support pragma comment(lib), load the X11 and OpenGL
+                // libraries manually to keep the single-header drop-in interface
+
+                x11Library = dlopen("libX11.so", RTLD_LAZY | RTLD_LOCAL);
+                if (!x11Library)
+                    return false;
+
+                auto XOpenDisplay = (Display*(*)(char*)) dlsym(x11Library, "XOpenDisplay");
+                if (!XOpenDisplay)
+                    return false;
+
+                XFree = (int(*)(void*)) dlsym(x11Library, "XFree");
+                if (!XFree)
+                    return false;
+
+                auto XScreenOfDisplay = (Screen*(*)(Display*,int)) dlsym(x11Library, "XScreenOfDisplay");
+                if (!XScreenOfDisplay)
+                    return false;
+
+                auto XCreateColormap = (Colormap(*)(Display*,Window,Visual*,int)) dlsym(x11Library, "XCreateColormap");
+                if (!XCreateColormap)
+                    return false;
+
+                auto XCreateWindow = (Window(*)(Display*,Window,int,int,unsigned int,unsigned int,unsigned int,int,unsigned int,Visual*,unsigned long,XSetWindowAttributes*)) dlsym(x11Library, "XCreateWindow");
+                if (!XCreateWindow)
+                    return false;
+
+                auto XMapWindow = (int(*)(Display*,Window)) dlsym(x11Library, "XMapWindow");
+                if (!XMapWindow)
+                    return false;
+
+                XStoreName = (int(*)(Display*,Window,const char*)) dlsym(x11Library, "XStoreName");
+                if (!XStoreName)
+                    return false;
+
+                XPending = (int(*)(Display*)) dlsym(x11Library, "XPending");
+                if (!XPending)
+                    return false;
+
+                XNextEvent = (int(*)(Display*,XEvent*)) dlsym(x11Library, "XNextEvent");
+                if (!XNextEvent)
+                    return false;
+
+                XDestroyWindow = (int(*)(Display*,Window)) dlsym(x11Library, "XDestroyWindow");
+                if (!XDestroyWindow)
+                    return false;
+
+                XCloseDisplay = (int(*)(Display*)) dlsym(x11Library, "XCloseDisplay");
+                if (!XCloseDisplay)
+                    return false;
+
+                XAllocSizeHints = (XSizeHints* (*)()) dlsym(x11Library, "XAllocSizeHints");
+                if (!XAllocSizeHints)
+                    return false;
+
+                XSetWMNormalHints = (void(*)(Display*,Window,XSizeHints*)) dlsym(x11Library, "XSetWMNormalHints");
+                if (!XSetWMNormalHints)
+                    return false;
+
+                XResizeWindow = (int(*)(Display*, Window, unsigned, unsigned)) dlsym(x11Library, "XResizeWindow");
+                if (!XResizeWindow)
+                    return false;
+
+                auto XInternAtom = (Atom(*)(Display*,char*,Bool)) dlsym(x11Library, "XInternAtom");
+                if (!XInternAtom)
+                    return false;
+                auto XSetWMProtocols = (Status(*)(Display*,Window,Atom*,int)) dlsym(x11Library, "XSetWMProtocols");
+                if (!XSetWMProtocols)
+                    return false;
+
+                glLibrary = dlopen("libGL.so", RTLD_LAZY | RTLD_LOCAL);
+                if (!glLibrary)
+                    return false;
+
+                auto glXChooseFBConfig = (GLXFBConfig*(*)(Display*,int,const int *,int*)) dlsym(glLibrary, "glXChooseFBConfig");
+                if (!glXChooseFBConfig)
+                    return false;
+
+                auto glXGetVisualFromFBConfig = (XVisualInfo*(*)(Display*,GLXFBConfig)) dlsym(glLibrary, "glXGetVisualFromFBConfig");
+                if (!glXGetVisualFromFBConfig)
+                    return false;
+
+                auto glXCreateContextAttribsARB = (GLXContext(*)(Display*,GLXFBConfig,GLXContext,Bool,const int*)) dlsym(glLibrary, "glXCreateContextAttribsARB");
+                if (!glXCreateContextAttribsARB)
+                    return false;
+
+                auto glXMakeCurrent = (Bool(*)(Display*,GLXDrawable,GLXContext ctx)) dlsym(glLibrary, "glXMakeCurrent");
+                if (!glXMakeCurrent)
+                    return false;
+
+                glXSwapBuffers = (void(*)(Display*,GLXDrawable)) dlsym(glLibrary, "glXSwapBuffers");
+                if (!glXSwapBuffers)
+                    return false;
+
+                glXDestroyContext = (void(*)(Display*, GLXContext ctx)) dlsym(glLibrary, "glXDestroyContext");
+                if (!glXDestroyContext)
+                    return false;
+
+                using glx_proc_t = void(*)();
+                auto glXGetProcAddress = (glx_proc_t (*)(const GLubyte*)) dlsym(glLibrary, "glXGetProcAddress");
+                if (!glXGetProcAddress)
+                    return false;
+
+                // Initialize the X11 window
+
+                x11Display = XOpenDisplay(nullptr);
+                if (!x11Display)
+                    return false;
+
+                int fbConfigAttibutes[] =
+                {
+                    GLX_X_RENDERABLE, True,
+                    GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
+                    GLX_RENDER_TYPE, GLX_RGBA_BIT,
+                    GLX_X_VISUAL_TYPE, GLX_TRUE_COLOR,
+                    GLX_RED_SIZE, 8,
+                    GLX_GREEN_SIZE, 8,
+                    GLX_BLUE_SIZE, 8,
+                    GLX_ALPHA_SIZE, 8,
+                    GLX_DOUBLEBUFFER, True,
+                    None
+                };
+
+                int fbConfigCount;
+                GLXFBConfig *fbConfigs = glXChooseFBConfig(x11Display, DefaultScreen(x11Display), fbConfigAttibutes, &fbConfigCount);
+                if (!fbConfigs)
+                    return false;
+
+                GLXFBConfig fbConfig = fbConfigs[0];
+                XFree(fbConfigs);
+
+                XVisualInfo *visualInfo = glXGetVisualFromFBConfig(x11Display, fbConfig);
+
+                Window rootWindow = RootWindow(x11Display, visualInfo->screen);
+
+                XSetWindowAttributes windowAttributes;
+                windowAttributes.colormap = XCreateColormap(x11Display, rootWindow, visualInfo->visual, AllocNone);
+                windowAttributes.event_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask;
+
+                x11Window = XCreateWindow(x11Display, rootWindow, 0, 0, width, height, 0, visualInfo->depth,
+                    InputOutput, visualInfo->visual, CWColormap | CWEventMask, &windowAttributes);
+
+                XSizeHints *sizeHints = XAllocSizeHints();
+
+                sizeHints->flags = PSize | PMinSize | PMaxSize;
+                sizeHints->width = width;
+                sizeHints->min_width = width;
+                sizeHints->max_width = width;
+                sizeHints->height = height;
+                sizeHints->min_height = height;
+                sizeHints->max_height = height;
+
+                XSetWMNormalHints(x11Display, x11Window, sizeHints);
+                XFree(sizeHints);
+
+                XResizeWindow(x11Display, x11Window, width, height);
+
+                XMapWindow(x11Display, x11Window);
+                XStoreName(x11Display, x11Window, appName.data());
+
+                char closeWindowName[] = "WM_DELETE_WINDOW";
+                closeWindowAtom = XInternAtom(x11Display, closeWindowName, False);
+                XSetWMProtocols(x11Display, x11Window, &closeWindowAtom, 1);
+
+                int glxContextAttributes[] = {
+                    GLX_CONTEXT_MAJOR_VERSION_ARB, 3,
+                    GLX_CONTEXT_MINOR_VERSION_ARB, 2,
+                    GLX_CONTEXT_PROFILE_MASK_ARB, GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
+                    None
+                };
+
+                glxContext = glXCreateContextAttribsARB(x11Display, fbConfig, 0, True, glxContextAttributes);
+                if (!glxContext)
+                    return false;
+
+                if (glXMakeCurrent(x11Display, x11Window, glxContext) != True)
+                    return false;
+
+                // Helper function to skip too much function pointer casting
+                auto loadGLFunction = [&](auto & targetFunctionPointer, const char* name)
+                {
+                    targetFunctionPointer = (std::remove_reference_t<decltype(targetFunctionPointer)>) glXGetProcAddress((const GLubyte*)name);
+                    return targetFunctionPointer != nullptr;
+                };
+
+                if (!loadGLFunction(glClear, "glClear")) return false;
+                if (!loadGLFunction(glGenTextures, "glGenTextures")) return false;
+                if (!loadGLFunction(glDeleteTextures, "glDeleteTextures")) return false;
+                if (!loadGLFunction(glBindTexture, "glBindTexture")) return false;
+                if (!loadGLFunction(glTexImage2D, "glTexImage2D")) return false;
+                if (!loadGLFunction(glTexSubImage2D, "glTexSubImage2D")) return false;
+                if (!loadGLFunction(glGenFramebuffers, "glGenFramebuffers")) return false;
+                if (!loadGLFunction(glDeleteFramebuffers, "glDeleteFramebuffers")) return false;
+                if (!loadGLFunction(glBindFramebuffer, "glBindFramebuffer")) return false;
+                if (!loadGLFunction(glFramebufferTexture, "glFramebufferTexture")) return false;
+                if (!loadGLFunction(glBlitFramebuffer, "glBlitFramebuffer")) return false;
+
+                glGenTextures(1, &texture);
+                glBindTexture(GL_TEXTURE_2D, texture);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+                glGenFramebuffers(1, &framebuffer);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
+                glFramebufferTexture(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0);
+
+                return true;
+            }
+
+            int remapMouseButton(int x11Button)
+            {
+                switch (x11Button)
+                {
+                case 1: return 0; // Left
+                case 2: return 2; // Middle
+                case 3: return 1; // Right
+                default: return 0;
+                }
+            }
+
+            void PumpMessages()
+            {
+                XEvent event;
+
+                while (XPending(x11Display)) {
+                    XNextEvent(x11Display, &event);
+                    switch (event.type)
+                    {
+                    // TODO: these are hardware-dependent, need to unify key codes across platforms
+                    case KeyPress:
+                        // if (event.xkey.keycode < 256)
+                        //     keys[event.xkey.keycode] = true;
+                        break;
+                    case KeyRelease:
+                        // if (event.xkey.keycode < 256)
+                        //     keys[event.xkey.keycode] = true;
+                        break;
+                    case ButtonPress:
+                        mouseButtons[remapMouseButton(event.xbutton.button)] = true;
+                        break;
+                    case ButtonRelease:
+                        mouseButtons[remapMouseButton(event.xbutton.button)] = false;
+                        break;
+                    case MotionNotify:
+                        mouseX = event.xmotion.x;
+                        mouseY = event.xmotion.y;
+                        break;
+                    case ClientMessage:
+                        if (event.xclient.data.l[0] == closeWindowAtom)
+                            shouldQuit = true;
+                        break;
+                    }
+                }
+            }
+
+            void SetTitle(const char* title)
+            {
+                XStoreName(x11Display, x11Window, title);
+            }
+
+            void SetFullscreen(bool, uint32, uint32)
+            {
+            }
+
+            void ResizeWindow(uint32 width, uint32 height, bool)
+            {
+                XResizeWindow(x11Display, x11Window, width, height);
+                glBindTexture(GL_TEXTURE_2D, texture);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            }
+
+            NativeWindowHandle GetWindowHandle() const { return 0; }
+
+            void ShutdownWindow()
+            {
+                glDeleteFramebuffers(1, &framebuffer);
+                glDeleteTextures(1, &texture);
+
+                glXDestroyContext(x11Display, glxContext);
+                XDestroyWindow(x11Display, x11Window);
+                XCloseDisplay(x11Display);
+
+                dlclose(glLibrary);
+                dlclose(x11Library);
+            }
+
+            bool DoRender(const uint8* pixels)
+            {
+                glClear(GL_COLOR_BUFFER_BIT);
+
+                glBindTexture(GL_TEXTURE_2D, texture);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                glBlitFramebuffer(0, 0, width, height, 0, height, width, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+                glXSwapBuffers(x11Display, x11Window);
+
+                return true;
+            }
+        };
+
+        struct RendererLinuxX11GL
+        {
+            PlatformLinuxX11GL * platform;
+
+            bool Init(PlatformLinuxX11GL * platform, uint32, uint32)
+            {
+                this->platform = platform;
+                return true;
+            }
+
+            bool Render(const uint8* pixels, uint32, uint32, bool)
+            {
+                return platform->DoRender(pixels);
+            }
+
+            bool Resize(uint32, uint32)
+            {
+                return true;
+            }
+
+            void Shutdown()
+            {}
+        };
+
         #else
+
         struct PlatformStub
         {
             bool InitWindow(uint32, uint32) { return true; }
@@ -992,16 +1393,20 @@ namespace Thirteen
             bool Resize(uint32, uint32) { return false; }
             void Shutdown() {}
         };
+
         #endif
 
         struct BackendTraits
         {
-            #if defined(_WIN32)
+            #if defined(THIRTEEN_PLATFORM_WINDOWS)
             using Platform = PlatformWin32;
             using Renderer = RendererD3D12;
-            #elif THIRTEEN_PLATFORM_MACOS
+            #elif defined(THIRTEEN_PLATFORM_MACOS)
             using Platform = PlatformMetal;
             using Renderer = RendererMetal;
+            #elif defined(THIRTEEN_PLATFORM_LINUX)
+            using Platform = PlatformLinuxX11GL;
+            using Renderer = RendererLinuxX11GL;
             #else
             using Platform = PlatformStub;
             using Renderer = RendererStub;
@@ -1015,8 +1420,8 @@ namespace Thirteen
         RendererBackend* renderer = nullptr;
     }
 
-    #if defined(_WIN32)
-    LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+    #if defined(THIRTEEN_PLATFORM_WINDOWS)
+    LRESULT CALLBACK Internal::PlatformWin32::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
         using namespace Internal;
         switch (msg)
@@ -1118,7 +1523,7 @@ namespace Thirteen
         }
 
         renderer = new RendererBackend();
-        if (!renderer->Init(platform->GetWindowHandle(), width, height))
+        if (!renderer->Init(platform, width, height))
         {
             renderer->Shutdown();
             delete renderer;
