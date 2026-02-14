@@ -19,6 +19,8 @@ Nikita Lisitsa - Linux/X11+OpenGL
 
 #if defined(_WIN32)
     #define THIRTEEN_PLATFORM_WINDOWS
+#elif defined(__EMSCRIPTEN__)
+    #define THIRTEEN_PLATFORM_WEB
 #elif defined(__APPLE__) && defined(TARGET_OS_OSX) && TARGET_OS_OSX
     #define THIRTEEN_PLATFORM_MACOS
 #elif defined(__linux__)
@@ -34,7 +36,7 @@ Nikita Lisitsa - Linux/X11+OpenGL
     #include <windows.h>
     #include <d3d12.h>
     #include <dxgi1_6.h>
-#elif defined(__EMSCRIPTEN__)
+#elif defined(THIRTEEN_PLATFORM_WEB)
     #include <emscripten/emscripten.h>
     #include <emscripten/html5.h>
     #include <webgpu/webgpu.h>
