@@ -74,3 +74,33 @@ jobs:
 
     - name: Build successful
       run: echo "Build completed successfully for ${{ matrix.example }} on ${{ runner.os }} (${{ matrix.config }})"
+
+  build-wasm:
+    name: Build ${{ matrix.example }} with Emscripten (${{ matrix.config }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [Simple, Mandelbrot, Minesweeper]
+        config: [Debug, Release]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Emscripten
+      uses: mymindstorm/setup-emsdk@v14
+      with:
+        version: latest
+    
+    - name: Build with Emscripten
+      run: |
+        emcc -std=c++17 ${{ matrix.config == 'Debug' && '-g -O0' || '-O2' }} \
+          -I. \
+          -sUSE_WEBGPU=1 \
+          -sASYNCIFY \
+          Examples/${{ matrix.example }}/main.cpp \
+          -o ${{ matrix.example }}.html
+    
+    - name: Build successful
+      run: echo "Build completed successfully for ${{ matrix.example }} with Emscripten (${{ matrix.config }})"
