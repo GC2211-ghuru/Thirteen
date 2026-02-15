@@ -746,13 +746,9 @@ namespace Thirteen
             {
                 if (!s_instance)
                     return EM_FALSE;
-                int canvasWidth = 0;
-                int canvasHeight = 0;
-                if (emscripten_get_canvas_element_size(c_canvasSelector, &canvasWidth, &canvasHeight) == EMSCRIPTEN_RESULT_SUCCESS)
-                {
-                    if (canvasWidth > 0 && canvasHeight > 0 && ((uint32)canvasWidth != width || (uint32)canvasHeight != height))
-                        SetSize((uint32)canvasWidth, (uint32)canvasHeight);
-                }
+                // Do not implicitly call SetSize() here. SetSize() can reallocate the pixel
+                // buffer and return a new pointer, which must be handled by application code.
+                // Automatic canvas resize events cannot safely propagate that new pointer.
                 return EM_TRUE;
             }
 
@@ -807,7 +803,7 @@ namespace Thirteen
             WGPUQueue queue = nullptr;
             WGPUInstance instance = nullptr;
             WGPUSurface surface = nullptr;
-            WGPUTextureFormat surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
+            WGPUTextureFormat surfaceFormat = WGPUTextureFormat_RGBA8Unorm;
             uint32 configuredWidth = 0;
             uint32 configuredHeight = 0;
             bool adapterRequestPending = false;
@@ -968,7 +964,6 @@ namespace Thirteen
                 WGPUExtent3D writeSize = { width, height, 1 };
                 wgpuQueueWriteTexture(queue, &dst, pixels, (size_t)width * (size_t)height * 4u, &layout, &writeSize);
 
-                wgpuSurfacePresent(surface);
                 wgpuTextureRelease(surfaceTexture.texture);
                 return true;
             }
