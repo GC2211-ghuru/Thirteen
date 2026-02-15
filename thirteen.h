@@ -749,6 +749,64 @@ namespace Thirteen
                 // Do not implicitly call SetSize() here. SetSize() can reallocate the pixel
                 // buffer and return a new pointer, which must be handled by application code.
                 // Automatic canvas resize events cannot safely propagate that new pointer.
+                // Keep this callback side-effect free; canvas/surface reconciliation happens in Render().
+                return EM_TRUE;
+            }
+
+            static bool OnFullscreenCanvasResized(int, const void*, void*)
+            {
+                return true;
+            }
+
+            static EM_BOOL OnFullscreenChange(int, const EmscriptenFullscreenChangeEvent* e, void*)
+            {
+                if (!s_instance || !e)
+                    return EM_FALSE;
+
+                if (e->isFullscreen)
+                {
+                    // Keep internal render resolution stable; use CSS for fullscreen scaling.
+                    emscripten_set_canvas_element_size(c_canvasSelector, (int)width, (int)height);
+                    EM_ASM({
+                        var c = document.querySelector('#canvas');
+                        if (c) {
+                            c.style.setProperty('position', 'fixed', 'important');
+                            c.style.setProperty('left', '0', 'important');
+                            c.style.setProperty('top', '0', 'important');
+                            c.style.setProperty('right', '0', 'important');
+                            c.style.setProperty('bottom', '0', 'important');
+                            c.style.setProperty('width', '100vw', 'important');
+                            c.style.setProperty('height', '100vh', 'important');
+                            c.style.setProperty('margin', '0', 'important');
+                            c.style.setProperty('display', 'block', 'important');
+                            c.style.setProperty('max-width', 'none', 'important');
+                            c.style.setProperty('max-height', 'none', 'important');
+                        }
+                        document.body.style.margin = '0';
+                        document.documentElement.style.margin = '0';
+                        document.body.style.overflow = 'hidden';
+                    });
+                }
+                else
+                {
+                    EM_ASM({
+                        var c = document.querySelector('#canvas');
+                        if (c) {
+                            c.style.position = "";
+                            c.style.left = "";
+                            c.style.top = "";
+                            c.style.right = "";
+                            c.style.bottom = "";
+                            c.style.width = $0 + 'px';
+                            c.style.height = $1 + 'px';
+                            c.style.display = 'block';
+                            c.style.margin = '0 auto';
+                            c.style.maxWidth = "";
+                            c.style.maxHeight = "";
+                        }
+                        document.body.style.overflow = "";
+                    }, (int)width, (int)height);
+                }
                 return EM_TRUE;
             }
 
@@ -759,12 +817,23 @@ namespace Thirteen
                 if (emscripten_set_canvas_element_size(c_canvasSelector, (int)width, (int)height) != EMSCRIPTEN_RESULT_SUCCESS)
                     return false;
 
+                EM_ASM({
+                    var c = document.querySelector('#canvas');
+                    if (c) {
+                        c.style.width = $0 + 'px';
+                        c.style.height = $1 + 'px';
+                        c.style.display = 'block';
+                        c.style.margin = '0 auto';
+                    }
+                }, (int)width, (int)height);
+
                 emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, true, OnKeyDown);
                 emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, true, OnKeyUp);
                 emscripten_set_mousedown_callback(c_canvasSelector, nullptr, true, OnMouseDown);
                 emscripten_set_mouseup_callback(c_canvasSelector, nullptr, true, OnMouseUp);
                 emscripten_set_mousemove_callback(c_canvasSelector, nullptr, true, OnMouseMove);
                 emscripten_set_resize_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, false, OnCanvasResize);
+                emscripten_set_fullscreenchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, nullptr, true, OnFullscreenChange);
                 return true;
             }
 
@@ -775,11 +844,70 @@ namespace Thirteen
                 emscripten_set_window_title(title ? title : "");
             }
 
-            void SetFullscreen(bool, uint32, uint32) {}
+            void SetFullscreen(bool fullscreen, uint32 width, uint32 height)
+            {
+                if (fullscreen)
+                {
+                    EmscriptenFullscreenStrategy strategy = {};
+                    strategy.scaleMode = EMSCRIPTEN_FULLSCREEN_SCALE_STRETCH;
+                    strategy.canvasResolutionScaleMode = EMSCRIPTEN_FULLSCREEN_CANVAS_SCALE_HIDEF;
+                    strategy.filteringMode = EMSCRIPTEN_FULLSCREEN_FILTERING_DEFAULT;
+                    strategy.canvasResizedCallback = OnFullscreenCanvasResized;
+                    strategy.canvasResizedCallbackUserData = nullptr;
+                    strategy.canvasResizedCallbackTargetThread = EM_CALLBACK_THREAD_CONTEXT_CALLING_THREAD;
+                    EMSCRIPTEN_RESULT r = emscripten_request_fullscreen_strategy(c_canvasSelector, 1, &strategy);
+                    if (r != EMSCRIPTEN_RESULT_SUCCESS)
+                        emscripten_enter_soft_fullscreen(c_canvasSelector, &strategy);
+                    EM_ASM({
+                        var c = document.querySelector('#canvas');
+                        if (c) {
+                            c.style.position = 'fixed';
+                            c.style.left = '0';
+                            c.style.top = '0';
+                            c.style.right = '0';
+                            c.style.bottom = '0';
+                            c.style.width = '100vw';
+                            c.style.height = '100vh';
+                            c.style.display = 'block';
+                            c.style.margin = '0';
+                        }
+                        document.body.style.margin = '0';
+                        document.documentElement.style.margin = '0';
+                        document.body.style.overflow = 'hidden';
+                    });
+                }
+                else
+                {
+                    emscripten_exit_fullscreen();
+                    EM_ASM({
+                        var c = document.querySelector('#canvas');
+                        if (c) {
+                            c.style.position = "";
+                            c.style.left = "";
+                            c.style.top = "";
+                            c.style.right = "";
+                            c.style.bottom = "";
+                            c.style.width = $0 + 'px';
+                            c.style.height = $1 + 'px';
+                            c.style.display = 'block';
+                            c.style.margin = '0 auto';
+                        }
+                        document.body.style.overflow = "";
+                    }, (int)width, (int)height);
+                }
+            }
 
             void ResizeWindow(uint32 width, uint32 height, bool)
             {
                 emscripten_set_canvas_element_size(c_canvasSelector, (int)width, (int)height);
+
+                EM_ASM({
+                    var c = document.querySelector('#canvas');
+                    if (c) {
+                        c.style.width = $0 + 'px';
+                        c.style.height = $1 + 'px';
+                    }
+                }, (int)width, (int)height);
             }
 
             NativeWindowHandle GetWindowHandle() const { return nullptr; }
@@ -792,6 +920,7 @@ namespace Thirteen
                 emscripten_set_mouseup_callback(c_canvasSelector, nullptr, true, nullptr);
                 emscripten_set_mousemove_callback(c_canvasSelector, nullptr, true, nullptr);
                 emscripten_set_resize_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, false, nullptr);
+                emscripten_set_fullscreenchange_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT, nullptr, true, nullptr);
                 s_instance = nullptr;
             }
         };
@@ -809,6 +938,82 @@ namespace Thirteen
             bool adapterRequestPending = false;
             bool deviceRequestPending = false;
             bool requestFailed = false;
+
+            bool CreateSurface()
+            {
+                if (!instance)
+                    return false;
+
+                if (surface)
+                {
+                    wgpuSurfaceRelease(surface);
+                    surface = nullptr;
+                }
+
+                WGPUEmscriptenSurfaceSourceCanvasHTMLSelector canvasDesc = {};
+                canvasDesc.chain.sType = WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector;
+                canvasDesc.selector.data = PlatformWeb::c_canvasSelector;
+                canvasDesc.selector.length = WGPU_STRLEN;
+
+                WGPUSurfaceDescriptor surfaceDesc = {};
+                surfaceDesc.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&canvasDesc);
+                surface = wgpuInstanceCreateSurface(instance, &surfaceDesc);
+                return surface != nullptr;
+            }
+
+            void GetRenderTargetSize(uint32 internalWidth, uint32 internalHeight, uint32& outWidth, uint32& outHeight)
+            {
+                int canvasWidth = 0;
+                int canvasHeight = 0;
+                if (emscripten_get_canvas_element_size(PlatformWeb::c_canvasSelector, &canvasWidth, &canvasHeight) == EMSCRIPTEN_RESULT_SUCCESS &&
+                    canvasWidth > 0 && canvasHeight > 0)
+                {
+                    outWidth = (uint32)canvasWidth;
+                    outHeight = (uint32)canvasHeight;
+                    return;
+                }
+
+                // Recover from transient/fullscreen states where canvas size reports 0x0.
+                emscripten_set_canvas_element_size(PlatformWeb::c_canvasSelector, (int)internalWidth, (int)internalHeight);
+                outWidth = internalWidth;
+                outHeight = internalHeight;
+            }
+
+            bool AcquireSurfaceTexture(WGPUSurfaceTexture& outSurfaceTexture, uint32 width, uint32 height)
+            {
+                for (int attempt = 0; attempt < 3; ++attempt)
+                {
+                    outSurfaceTexture = {};
+                    wgpuSurfaceGetCurrentTexture(surface, &outSurfaceTexture);
+
+                    const bool surfaceOk =
+                        outSurfaceTexture.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
+                        outSurfaceTexture.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal;
+                    if (surfaceOk && outSurfaceTexture.texture)
+                        return true;
+
+                    if (outSurfaceTexture.texture)
+                    {
+                        wgpuTextureRelease(outSurfaceTexture.texture);
+                        outSurfaceTexture.texture = nullptr;
+                    }
+
+                    if (attempt == 0)
+                    {
+                        if (!ConfigureSurface(width, height))
+                            return false;
+                    }
+                    else
+                    {
+                        if (!CreateSurface())
+                            return false;
+                        if (!ConfigureSurface(width, height))
+                            return false;
+                    }
+                }
+
+                return false;
+            }
 
             static void OnRequestDevice(WGPURequestDeviceStatus status, WGPUDevice requestedDevice, WGPUStringView, void* userdata1, void*)
             {
@@ -887,15 +1092,7 @@ namespace Thirteen
                 if (!instance)
                     return false;
 
-                WGPUEmscriptenSurfaceSourceCanvasHTMLSelector canvasDesc = {};
-                canvasDesc.chain.sType = WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector;
-                canvasDesc.selector.data = PlatformWeb::c_canvasSelector;
-                canvasDesc.selector.length = WGPU_STRLEN;
-
-                WGPUSurfaceDescriptor surfaceDesc = {};
-                surfaceDesc.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&canvasDesc);
-                surface = wgpuInstanceCreateSurface(instance, &surfaceDesc);
-                if (!surface)
+                if (!CreateSurface())
                     return false;
 
                 configuredWidth = width;
@@ -931,24 +1128,19 @@ namespace Thirteen
                         return true;
                 }
 
-                if (width != configuredWidth || height != configuredHeight)
+                uint32 renderWidth = width;
+                uint32 renderHeight = height;
+                GetRenderTargetSize(width, height, renderWidth, renderHeight);
+
+                if (configuredWidth != renderWidth || configuredHeight != renderHeight)
                 {
-                    if (!ConfigureSurface(width, height))
+                    if (!ConfigureSurface(renderWidth, renderHeight))
                         return false;
                 }
 
                 WGPUSurfaceTexture surfaceTexture = {};
-                wgpuSurfaceGetCurrentTexture(surface, &surfaceTexture);
-
-                const bool surfaceOk =
-                    surfaceTexture.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
-                    surfaceTexture.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal;
-                if (!surfaceOk || !surfaceTexture.texture)
-                {
-                    if (!ConfigureSurface(width, height))
-                        return false;
+                if (!AcquireSurfaceTexture(surfaceTexture, renderWidth, renderHeight))
                     return true;
-                }
 
                 WGPUTexelCopyTextureInfo dst = {};
                 dst.texture = surfaceTexture.texture;
@@ -961,7 +1153,15 @@ namespace Thirteen
                 layout.bytesPerRow = width * 4u;
                 layout.rowsPerImage = height;
 
-                WGPUExtent3D writeSize = { width, height, 1 };
+                const uint32 copyWidth = (width < renderWidth) ? width : renderWidth;
+                const uint32 copyHeight = (height < renderHeight) ? height : renderHeight;
+                if (copyWidth == 0 || copyHeight == 0)
+                {
+                    wgpuTextureRelease(surfaceTexture.texture);
+                    return true;
+                }
+
+                WGPUExtent3D writeSize = { copyWidth, copyHeight, 1 };
                 wgpuQueueWriteTexture(queue, &dst, pixels, (size_t)width * (size_t)height * 4u, &layout, &writeSize);
 
                 wgpuTextureRelease(surfaceTexture.texture);
