@@ -79,11 +79,6 @@ A classic Minesweeper game implementation. [View source code](Examples/Minesweep
 
 ![Minesweeper Example](Minesweeper.png)
 
-### Notes
-- The web backend expects a `<canvas id="canvas"></canvas>` in the generated page.
-- `SetFullscreen()` is currently a no-op on web.
-- Input uses browser events mapped into the same `GetKey()` / mouse APIs.
-
 ## API Reference
 
 #### `uint8* Init(uint32 width = 1024, uint32 height = 768, bool fullscreen = false)`
@@ -252,3 +247,6 @@ Alan Wolfe - API, examples and Win32/DX12 implementation
 Francesco Carucci - MacOS/Metal and WASM/WebGPU implementation
 
 Nikita Lisitsa - Linux/X11+OpenGL implementation
+
+Any contribution to this library earns you a spot in the credits, so feel free to add your name to this list as part of any submitted PR. Also add your name to the top of thirteen.h so the two places stay synchronized.
+Thank you for your contributions!
